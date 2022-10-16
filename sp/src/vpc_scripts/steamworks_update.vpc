@@ -27,6 +27,10 @@ $Macro STEAMWORKS_VERSION	"1550"
 //
 $Conditional STEAM_API_DLL_MANIFEST	"1"
 
+// STEAM_INPUT
+// Adds Steam Input and Steam Deck integration.
+$Conditional STEAM_INPUT	"1"
+
 //-----------------------------------------------------------------------------
 
 $Configuration "Debug"
@@ -34,6 +38,7 @@ $Configuration "Debug"
 	$Compiler
 	{
 		$PreprocessorDefinitions		"$BASE;STEAMWORKS_VERSION=$STEAMWORKS_VERSION"
+		$PreprocessorDefinitions		"$BASE;STEAM_INPUT"		[$STEAM_INPUT]
 	}
 }
 
@@ -42,6 +47,7 @@ $Configuration "Release"
 	$Compiler
 	{
 		$PreprocessorDefinitions		"$BASE;STEAMWORKS_VERSION=$STEAMWORKS_VERSION"
+		$PreprocessorDefinitions		"$BASE;STEAM_INPUT"		[$STEAM_INPUT]
 	}
 }
 

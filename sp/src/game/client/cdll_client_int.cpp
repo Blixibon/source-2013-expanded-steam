@@ -147,6 +147,10 @@
 #include "fbxsystem/fbxsystem.h"
 #endif
 
+#ifdef STEAM_INPUT
+#include "in_steaminput.h"
+#endif
+
 extern vgui::IInputInternal *g_InputInternal;
 
 //=============================================================================
@@ -872,6 +876,15 @@ int CHLClient::Init( CreateInterfaceFn appSystemFactory, CreateInterfaceFn physi
 
 #ifndef NO_STEAM
 	ClientSteamContext().Activate();
+
+#if STEAMWORKS_VERSION >= 1520
+	if (SteamUtils()->IsSteamRunningOnSteamDeck())
+	{
+		CommandLine()->AppendParm( "-deck", NULL );
+		CommandLine()->AppendParm( "-w", "1280" );
+		CommandLine()->AppendParm( "-h", "800" );
+	}
+#endif
 #endif
 
 	// We aren't happy unless we get all of our interfaces.
@@ -1288,6 +1301,16 @@ void CHLClient::HudUpdate( bool bActive )
 		g_pSixenseInput->SixenseFrame( 0, NULL ); 
 	}
 #endif
+
+#ifdef STEAM_INPUT
+	//if (g_pSteamInput->IsEnabled())
+	{
+		if( !engine->IsConnected() || engine->IsPaused() )
+		{
+			g_pSteamInput->RunFrame();
+		}
+	}
+#endif
 }
 
 //-----------------------------------------------------------------------------
@@ -1573,6 +1596,10 @@ void CHLClient::LevelInitPreEntity( char const* pMapName )
 	g_bLevelInitialized = true;
 
 	input->LevelInit();
+
+#ifdef STEAM_INPUT
+	g_pSteamInput->LevelInitPreEntity();
+#endif
 
 	vieweffects->LevelInit();
 	

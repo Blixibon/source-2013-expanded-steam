@@ -28,6 +28,9 @@
 #include "utlhash.h"
 #include "UtlSortVector.h"
 #include "convar.h"
+#ifdef STEAM_INPUT
+#include "icommandline.h"
+#endif
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include <tier0/memdbgon.h>
@@ -2081,6 +2084,11 @@ bool EvaluateConditional( const char *str )
 
 	if ( Q_stristr( str, "$POSIX" ) )
 		return IsPosix() ^ bNot;
+
+#ifdef STEAM_INPUT
+	if ( Q_stristr( str, "$DECK" ) )
+		return IsDeck() ^ bNot;
+#endif
 	
 	return false;
 }
