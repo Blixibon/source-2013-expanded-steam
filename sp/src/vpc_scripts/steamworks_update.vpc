@@ -1,0 +1,48 @@
+﻿//-----------------------------------------------------------------------------
+//	STEAMWORKS_UPDATE.VPC
+//
+//	Definitions for the Steamworks SDK updates
+//
+//-----------------------------------------------------------------------------
+
+// STEAMWORKS_VERSION
+// An integer interpretation of the version of the Steamworks SDK currently being used by this codebase
+// For example:
+//
+// - Steamworks SDK v1.23 would be "1230"
+// - Source SDK 2013 uses v1.26a by default, which is expressed as "1261"
+// - As of October 8 2022, the latest version of Steamworks SDK is v1.55, which is expressed as "1550"
+//
+// Newer versions of Steamworks are used to integrate newer Steam features
+//
+$Macro STEAMWORKS_VERSION	"1550"
+
+// STEAM_API_DLL_MANIFEST
+// Adds a manifest to the client/server.dll which forces them to load the Steam API from their mod's bin folder
+// instead of from the app's engine bin folder.
+//
+// This is required for mods to update the Steam API, but it's not exactly good practice!
+// If you are responsible for a Steam mod/standalone app and can overwrite engine binaries for all users,
+// you should overwrite the original steam_api.dll instead of using this method.
+//
+$Conditional STEAM_API_DLL_MANIFEST	"1"
+
+//-----------------------------------------------------------------------------
+
+$Configuration "Debug"
+{
+	$Compiler
+	{
+		$PreprocessorDefinitions		"$BASE;STEAMWORKS_VERSION=$STEAMWORKS_VERSION"
+	}
+}
+
+$Configuration "Release"
+{
+	$Compiler
+	{
+		$PreprocessorDefinitions		"$BASE;STEAMWORKS_VERSION=$STEAMWORKS_VERSION"
+	}
+}
+
+//-----------------------------------------------------------------------------

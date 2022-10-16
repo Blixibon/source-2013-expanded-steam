@@ -64,12 +64,18 @@ $Configuration
 
 	$Linker
 	{
+		$GenerateManifest				"Yes" [$STEAM_API_DLL_MANIFEST]
 		$SystemLibraries				"iconv" [$OSXALL]
 		$SystemFrameworks				"Carbon" [$OSXALL]
 		$SystemLibraries				"rt" [$LINUXALL]
 		$IgnoreImportLibrary			"TRUE"
 		$AdditionalDependencies			"$BASE winmm.lib"	[$WIN32]
 		$AdditionalDependencies			"$BASE wsock32.lib Ws2_32.lib" [$BUILD_REPLAY]
+	}
+	
+	$ManifestTool
+	{
+		$AdditionalManifestFiles		"$SRCDIR\public\new_steam_api.manifest" [$STEAM_API_DLL_MANIFEST]
 	}
 }
 

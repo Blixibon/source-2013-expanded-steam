@@ -134,8 +134,13 @@ static void WriteAchievementGlobalState( KeyValues *pKV, bool bPersistToSteamClo
 
         if (pRemoteStorage)
         {
+#if STEAMWORKS_VERSION >= 1380 // "Modified GetQuota() to take in uint64 from int32, since Steam Cloud can now support quotas above 2GB"
+            uint64 availableBytes = 0;
+            uint64 totalBytes = 0;
+#else
             int32 availableBytes = 0;
             int32 totalBytes = 0;
+#endif
             if ( pRemoteStorage->GetQuota( &totalBytes, &availableBytes ) )
             {
                 if ( totalBytes > 0 )
