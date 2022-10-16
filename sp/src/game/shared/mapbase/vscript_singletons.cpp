@@ -34,6 +34,10 @@
 #if !defined(NO_STEAM)
 #include "steam/steam_api.h"
 #endif
+
+#if defined(STEAM_INPUT)
+#include "in_steaminput.h"
+#endif
 #endif
 
 #include "vscript_singletons.h"
@@ -3245,6 +3249,84 @@ BEGIN_SCRIPTDESC_ROOT_NAMED( CScriptSteamAPI, "CSteamAPI", SCRIPT_SINGLETON "" )
 END_SCRIPTDESC();
 #endif // !NO_STEAM
 
+
+//=============================================================================
+//=============================================================================
+
+
+#if defined(STEAM_INPUT)
+//=============================================================================
+// Steam Input
+//
+// Note that this interacts with ISource2013SteamInput, not ISteamInput directly.
+//=============================================================================
+class CScriptSteamInput
+{
+public:
+	bool IsEnabled()
+	{
+		return g_pSteamInput->IsEnabled();
+	}
+
+	const char *GetControllerName()
+	{
+		return g_pSteamInput->GetControllerName();
+	}
+
+	//-----------------------------------------------------------------------------
+
+	bool UsingJoysticks()
+	{
+		return g_pSteamInput->UsingJoysticks();
+	}
+	
+	void SetRumble( float fLeftMotor, float fRightMotor )
+	{
+		g_pSteamInput->SetRumble( fLeftMotor, fRightMotor );
+	}
+
+	void StopRumble()
+	{
+		g_pSteamInput->StopRumble();
+	}
+
+	//-----------------------------------------------------------------------------
+	
+	void SetLEDColor( int r, int g, int b )
+	{
+		g_pSteamInput->SetLEDColor( r, g, b );
+	}
+
+	void ResetLEDColor()
+	{
+		g_pSteamInput->ResetLEDColor();
+	}
+
+	//-----------------------------------------------------------------------------
+
+	const char *RemapHudHint( const char *pszInputHint )
+	{
+		g_pSteamInput->RemapHudHint( &pszInputHint );
+		return pszInputHint;
+	}
+
+} g_ScriptSteamInput;
+
+BEGIN_SCRIPTDESC_ROOT_NAMED( CScriptSteamInput, "CSource2013SteamInput", SCRIPT_SINGLETON "" )
+	DEFINE_SCRIPTFUNC( IsEnabled, "Returns true if a Steam Input controller is active." )
+	DEFINE_SCRIPTFUNC( GetControllerName, "Returns a shorthand string indicating the controller's name." )
+
+	DEFINE_SCRIPTFUNC( UsingJoysticks, "Returns true if controller is using joysticks." )
+	DEFINE_SCRIPTFUNC( SetRumble, "Sets the controller rumble on the left and right motor respectively." )
+	DEFINE_SCRIPTFUNC( StopRumble, "Stops all controller rumbling." )
+
+	DEFINE_SCRIPTFUNC( SetLEDColor, "Sets the controller's LED color if it supports it." )
+	DEFINE_SCRIPTFUNC( ResetLEDColor, "Resets any modified controller LED color to default." )
+
+	DEFINE_SCRIPTFUNC( RemapHudHint, "Remaps the input HUD hint if the controller should use a different one. See scripts/steaminput_hintremap.txt" )
+END_SCRIPTDESC();
+#endif // !NO_STEAM
+
 #endif // CLIENT_DLL
 
 
@@ -3280,6 +3362,10 @@ void RegisterScriptSingletons()
 
 #if !defined(NO_STEAM)
 	g_pScriptVM->RegisterInstance( &g_ScriptSteamAPI, "steam" );
+#endif
+
+#if defined(STEAM_INPUT)
+	g_pScriptVM->RegisterInstance( &g_ScriptSteamInput, "steaminput" );
 #endif
 #endif
 
