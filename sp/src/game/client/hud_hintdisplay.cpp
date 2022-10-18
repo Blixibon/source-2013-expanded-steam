@@ -629,7 +629,7 @@ bool CHudHintKeyDisplay::SetHintText( const char *text )
 						// '&' is a Mapbase feature which allows combinations of buttons to be shown in hints ("%walk&use%" >> "ALT + E")
 						// However, that's not as feasible with controller buttons due to the different fonts used and multiple buttons
 						// for the same binds, so for now we just show double slashes.
-						// (it's probably possible with enough effort thoguh)
+						// (it's probably possible with enough effort though)
 						char szBinding[8] = { 0 };
 						char *token = strtok(binding, "&");
 						while (token)

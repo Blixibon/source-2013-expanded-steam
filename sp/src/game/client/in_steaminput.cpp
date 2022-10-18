@@ -1,4 +1,4 @@
-//========= Mapbase - https://github.com/mapbase-source/source-sdk-2013 ============//
+//=============================================================================//
 //
 // Purpose: Community integration of Steam Input on Source SDK 2013.
 //
@@ -1170,7 +1170,11 @@ void CSource2013SteamInput::GetGlyphFontForCommand( const char *pszCommand, char
 
 		if (cChar != 0)
 		{
-			Q_snprintf( szChars, szCharsSize, "%s%c", szChars, cChar );
+			int len = strlen(szChars);
+			szChars[len] = cChar;
+			
+			if (len+1 >= szCharsSize)
+				break;
 		}
 	}
 }
