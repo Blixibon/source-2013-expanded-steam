@@ -28,7 +28,7 @@
 #include "utlhash.h"
 #include "UtlSortVector.h"
 #include "convar.h"
-#ifdef STEAM_INPUT
+#ifdef MAPBASE
 #include "icommandline.h"
 #endif
 
