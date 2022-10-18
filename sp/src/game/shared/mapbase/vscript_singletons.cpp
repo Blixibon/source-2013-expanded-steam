@@ -3236,6 +3236,14 @@ public:
 
 		return ret;
 	}
+#if STEAMWORKS_VERSION >= 1520
+	bool IsSteamRunningOnSteamDeck()
+	{
+		return SteamUtils()->IsSteamRunningOnSteamDeck();
+	}
+#else
+	bool IsSteamRunningOnSteamDeck() { return false; }
+#endif
 
 } g_ScriptSteamAPI;
 
@@ -3246,6 +3254,7 @@ BEGIN_SCRIPTDESC_ROOT_NAMED( CScriptSteamAPI, "CSteamAPI", SCRIPT_SINGLETON "" )
 	DEFINE_SCRIPTFUNC( GetCurrentBatteryPower, "Return the amount of battery power left in the current system in % [0..100], 255 for being on AC power" )
 	//DEFINE_SCRIPTFUNC( GetIPCountry, "Returns the 2 digit ISO 3166-1-alpha-2 format country code this client is running in (as looked up via an IP-to-location database)" )
 	DEFINE_SCRIPTFUNC( GetCurrentGameLanguage, "Gets the current language that the user has set as API language code. This falls back to the Steam UI language if the user hasn't explicitly picked a language for the title." )
+	DEFINE_SCRIPTFUNC( IsSteamRunningOnSteamDeck, "Returns true if the game is running on a Steam Deck." )
 END_SCRIPTDESC();
 #endif // !NO_STEAM
 
