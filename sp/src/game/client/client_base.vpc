@@ -64,7 +64,7 @@ $Configuration
 
 	$Linker
 	{
-		$GenerateManifest				"Yes" [$STEAM_API_DLL_MANIFEST]
+		$GenerateManifest				"Yes" [$STEAM_API_MOD_HACK]
 		$SystemLibraries				"iconv" [$OSXALL]
 		$SystemFrameworks				"Carbon" [$OSXALL]
 		$SystemLibraries				"rt" [$LINUXALL]
@@ -75,7 +75,7 @@ $Configuration
 	
 	$ManifestTool
 	{
-		$AdditionalManifestFiles		"$SRCDIR\public\new_steam_api.manifest" [$STEAM_API_DLL_MANIFEST]
+		$AdditionalManifestFiles		"$SRCDIR\public\new_steam_api.manifest" [$STEAM_API_MOD_HACK]
 	}
 }
 
@@ -1258,7 +1258,8 @@ $Project
 		$Lib		tier3
 		$Lib		vgui_controls
 		$Lib		vtf
-		$ImpLib		steam_api
+		$ImpLib		steam_api		[!$STEAM_API_MOD_HACK||!$LINUX]
+		$ImpLib		steam_ap2		[$STEAM_API_MOD_HACK&&$LINUX]
 		
 		$Lib $LIBCOMMON/libcrypto [$POSIX]
 
