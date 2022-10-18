@@ -1,4 +1,4 @@
-//========= Mapbase - https://github.com/mapbase-source/source-sdk-2013 ============//
+//=============================================================================//
 //
 // Purpose: Community integration of Steam Input on Source SDK 2013.
 //

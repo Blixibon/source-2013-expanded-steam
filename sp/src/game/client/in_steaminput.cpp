@@ -1,4 +1,4 @@
-//========= Mapbase - https://github.com/mapbase-source/source-sdk-2013 ============//
+//=============================================================================//
 //
 // Purpose: Community integration of Steam Input on Source SDK 2013.
 //
@@ -21,6 +21,7 @@
 #include "steam/isteaminput.h"
 #include "steam/isteamutils.h"
 #include "in_steaminput.h"
+#include "icommandline.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -181,6 +182,8 @@ public:
 
 	void LevelInitPreEntity() override;
 
+	void Shutdown();
+
 	void RunFrame() override;
 	
 	bool IsEnabled() override;
@@ -312,9 +315,8 @@ CON_COMMAND( si_print_state, "" )
 
 CON_COMMAND( si_restart, "" )
 {
-	SteamInput()->Shutdown();
-	SteamInput()->Init( true );
-	Msg("SteamInput reinitialized\n");
+	g_SteamInput.Shutdown();
+	g_pSteamInput->Init();
 }
 
 //-------------------------------------------
@@ -328,10 +330,17 @@ CSource2013SteamInput::~CSource2013SteamInput()
 
 void CSource2013SteamInput::Init()
 {
-	// Do this before initializing SteamInput()
-	InitActionManifest();
+	bool bInit = false;
 
-	if (!SteamInput()->Init( true ))
+	if (CommandLine()->CheckParm( "-nosteamcontroller" ) == 0 && SteamUtils()->IsOverlayEnabled())
+	{
+		// Do this before initializing SteamInput()
+		InitActionManifest();
+
+		bInit = SteamInput()->Init( true );
+	}
+
+	if (!bInit)
 	{
 		Msg( "SteamInput didn't initialize\n" );
 
@@ -482,6 +491,12 @@ void CSource2013SteamInput::LevelInitPreEntity()
 		ESteamInputType inputType = SteamInput()->GetInputTypeForHandle( m_nControllerHandle );
 		si_current_cfg.SetValue( IdentifyControllerParam( inputType ) );
 	}
+}
+
+void CSource2013SteamInput::Shutdown()
+{
+	SteamInput()->Shutdown();
+	m_nControllerHandle = 0;
 }
 
 //-------------------------------------------
@@ -1170,7 +1185,11 @@ void CSource2013SteamInput::GetGlyphFontForCommand( const char *pszCommand, char
 
 		if (cChar != 0)
 		{
-			Q_snprintf( szChars, szCharsSize, "%s%c", szChars, cChar );
+			int len = strlen(szChars);
+			szChars[len] = cChar;
+			
+			if (len+1 >= szCharsSize)
+				break;
 		}
 	}
 }
