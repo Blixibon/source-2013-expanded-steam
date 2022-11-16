@@ -191,6 +191,7 @@ public:
 	//-------------------------------------------
 	
 	const char *GetControllerName() override;
+	int GetControllerType() override;
 
 	void CheckControllerConnected();
 
@@ -791,6 +792,11 @@ const char *CSource2013SteamInput::GetControllerName()
 {
 	ESteamInputType inputType = SteamInput()->GetInputTypeForHandle( m_nControllerHandle );
 	return IdentifyControllerParam( inputType );
+}
+
+int CSource2013SteamInput::GetControllerType()
+{
+	return SteamInput()->GetInputTypeForHandle( m_nControllerHandle );
 }
 
 void CSource2013SteamInput::CheckControllerConnected()
@@ -1892,6 +1898,9 @@ void CSource2013SteamInput::LoadHintRemap( const char *pszFileName )
 				int i = m_HintRemaps.AddToTail();
 			
 				m_HintRemaps[i].pszOldHint = pKVHint->GetName();
+				if (m_HintRemaps[i].pszOldHint[0] == '#')
+					m_HintRemaps[i].pszOldHint++;
+
 				m_HintRemaps[i].pszNewHint = pKVRemappedHint->GetName();
 
 				// Parse remap conditions
@@ -1932,6 +1941,9 @@ void CSource2013SteamInput::RemapHudHint( const char **pszInputHint )
 {
 	if (!si_hintremap.GetBool())
 		return;
+
+	if ((*pszInputHint)[0] == '#')
+		(*pszInputHint)++;
 
 	int iRemap = -1;
 
