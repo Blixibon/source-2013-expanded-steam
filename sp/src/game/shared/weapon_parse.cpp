@@ -193,6 +193,13 @@ void PrecacheFileWeaponInfoDatabase( IFileSystem *filesystem, const unsigned cha
 	manifest->deleteThis();
 }
 
+#ifdef STEAM_INPUT
+CON_COMMAND( weapon_precache_weapon_info_database, "" )
+{
+	PrecacheFileWeaponInfoDatabase( filesystem, g_pGameRules->GetEncryptionKey() );
+}
+#endif
+
 KeyValues* ReadEncryptedKVFile( IFileSystem *filesystem, const char *szFilenameWithoutExtension, const unsigned char *pICEKey, bool bForceReadEncryptedFile /*= false*/ )
 {
 	Assert( strchr( szFilenameWithoutExtension, '.' ) == NULL );

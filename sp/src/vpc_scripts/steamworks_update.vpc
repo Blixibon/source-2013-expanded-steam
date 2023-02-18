@@ -16,7 +16,7 @@
 //
 // Newer versions of Steamworks are used to integrate newer Steam features
 //
-$Macro STEAMWORKS_VERSION	"1550"
+$Macro STEAMWORKS_VERSION	"1261"
 
 // STEAM_API_MOD_HACK
 //
@@ -34,7 +34,7 @@ $Macro STEAMWORKS_VERSION	"1550"
 // Steam mod/standalone app and can overwrite engine binaries for all users, you should just overwrite the
 // original steam_api library yourself instead of using these hacks.
 //
-$Conditional STEAM_API_MOD_HACK	"1"
+$Conditional STEAM_API_MOD_HACK	"0"
 
 // STEAM_INPUT
 // Adds Steam Input and Steam Deck integration.

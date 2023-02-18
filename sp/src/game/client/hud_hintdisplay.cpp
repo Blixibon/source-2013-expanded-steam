@@ -18,7 +18,8 @@
 #include "IGameUIFuncs.h"
 #include "inputsystem/iinputsystem.h"
 #ifdef STEAM_INPUT
-#include "in_steaminput.h"
+#include "expanded_steam/isteaminput.h"
+#include "vgui_controls/Image.h"
 //#include "vgui_controls/HTML.h"
 #include "filesystem.h"
 #include "icommandline.h"
@@ -131,6 +132,10 @@ bool CHudHintDisplay::SetHintText( wchar_t *text )
 	for (int i = 0; i < m_Labels.Count(); i++)
 	{
 		m_Labels[i]->MarkForDeletion();
+#ifdef STEAM_INPUT
+		if (m_Labels[i]->GetImageCount() > 1)
+			vgui::surface()->DestroyTextureID( m_Labels[i]->GetImageAtIndex(0)->GetID() );
+#endif
 	}
 	m_Labels.RemoveAll();
 
@@ -366,6 +371,7 @@ public:
 
 protected:
 	virtual void ApplySchemeSettings( vgui::IScheme *pScheme );
+	virtual void Paint();
 	virtual void OnThink();
 
 private:
@@ -375,12 +381,21 @@ private:
 
 #ifdef STEAM_INPUT
 	bool	m_bDontTintButtons;
+
+	CUtlVector<int> m_ButtonIcons;
+	int m_iButtonSize = 32;
+
+	union BindingChoice_t
+	{
+		const char *psz;
+		int i;
+	};
 	
 	// From CLocatorTarget in hud_locator_target.h
 	int			m_bScrollingBinds;
 	int			m_iBindingTick;
 	float		m_flNextBindingTick;
-	CUtlVector<CUtlVector<const char*>> (m_pchBindingChoices);
+	CUtlVector<CUtlVector<BindingChoice_t>> (m_pchBindingChoices);
 	bool		m_bBindingChoicesWereAllocated = false;
 #endif
 
@@ -458,6 +473,37 @@ bool CHudHintKeyDisplay::ShouldDraw( void )
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: 
+//-----------------------------------------------------------------------------
+void CHudHintKeyDisplay::Paint()
+{
+	BaseClass::Paint();
+
+#ifdef STEAM_INPUT
+	if (m_ButtonIcons.Count() > 0)
+	{
+		for (int i = 0; i < m_Labels.Count(); i++)
+		{
+			if ((i & 1) == 0)
+			{
+				vgui::surface()->DrawSetColor( m_Labels[i]->GetFgColor() );
+
+				int i2 = i / 2;
+				vgui::surface()->DrawSetTexture( m_pchBindingChoices[i2][ m_iBindingTick % m_pchBindingChoices[i2].Count() ].i );
+
+				int x, y;
+				m_Labels[i]->GetPos( x, y );
+
+				vgui::surface()->DrawTexturedRect( x, y, x + m_iButtonSize, y + m_iButtonSize );
+			}
+		}
+
+		vgui::surface()->DrawSetTexture( 0 );
+	}
+#endif
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Updates the label color each frame
 //-----------------------------------------------------------------------------
 void CHudHintKeyDisplay::OnThink()
@@ -487,13 +533,19 @@ void CHudHintKeyDisplay::OnThink()
 		}
 
 #ifdef STEAM_INPUT
-		if (m_bScrollingBinds && ( i & 1 ) == 0 && m_pchBindingChoices[i/2].Count() > 0)
+		if ((i & 1) == 0)
 		{
-			// Cycle through the list of binds at a rate of 2 per second
-			const char *pchBinding = m_pchBindingChoices[i/2][ m_iBindingTick % m_pchBindingChoices[i/2].Count() ];
-			if (pchBinding)
+			if (m_bScrollingBinds && m_pchBindingChoices[i / 2].Count() > 0)
 			{
-				m_Labels[i]->SetText( pchBinding );
+				// Cycle through the list of binds at a rate of 2 per second
+				if (m_ButtonIcons.Count() == 0)
+				{
+					const char *pchBinding = m_pchBindingChoices[i/2][ m_iBindingTick % m_pchBindingChoices[i/2].Count() ].psz;
+					if (pchBinding)
+					{
+						m_Labels[i]->SetText( pchBinding );
+					}
+				}
 			}
 		}
 #endif
@@ -527,15 +579,37 @@ bool CHudHintKeyDisplay::SetHintText( const char *text )
 		m_flNextBindingTick = gpGlobals->curtime + 0.75f;
 		m_iBindingTick = 0;
 	}
-	
-	for (int i = m_pchBindingChoices.Count()-1; i >= 0; i--)
-	{
-		if (m_bBindingChoicesWereAllocated)
-			m_pchBindingChoices[i].PurgeAndDeleteElements();
-		else
-			m_pchBindingChoices[i].Purge();
 
-		m_pchBindingChoices.FastRemove( i );
+	if (m_ButtonIcons.Count() > 0)
+	{
+		for (int i = m_ButtonIcons.Count()-1; i >= 0; i--)
+		{
+			vgui::surface()->DestroyTextureID( m_ButtonIcons[i] );
+			m_ButtonIcons.FastRemove( i );
+		}
+
+		for (int i = m_pchBindingChoices.Count()-1; i >= 0; i--)
+		{
+			m_pchBindingChoices[i].RemoveAll();
+			m_pchBindingChoices.FastRemove( i );
+		}
+	}
+	else
+	{
+		for (int i = m_pchBindingChoices.Count()-1; i >= 0; i--)
+		{
+			if (m_bBindingChoicesWereAllocated)
+			{
+				for (int i2 = m_pchBindingChoices[i].Count()-1; i2 >= 0; i2--)
+				{
+					delete m_pchBindingChoices[i][i2].psz;
+					m_pchBindingChoices[i].FastRemove( i2 );
+				}
+			}
+
+			m_pchBindingChoices[i].Purge();
+			m_pchBindingChoices.FastRemove( i );
+		}
 	}
 	m_bScrollingBinds = false;
 	m_bBindingChoicesWereAllocated = false;
@@ -619,119 +693,66 @@ bool CHudHintKeyDisplay::SetHintText( const char *text )
 
 				if (g_pSteamInput->UseGlyphs())
 				{
-					char szLabelText[16] = { 0 };
-					vgui::HFont hGlyphFont = m_hLargeFont;
-					const char *pszNotBound = VarArgs( "< %s, not bound >", *binding == '+' ? binding + 1 : binding );
+					label->SetFont( m_hLargeFont );
+					label->SetText( "" );
 
-#ifdef MAPBASE
+					m_bDontTintButtons = true; //!g_pSteamInput->TintGlyphs();
+					bIsBitmap = m_bDontTintButtons; // Prevents tinting
+
+					int fontTall = vgui::surface()->GetFontTall( m_hLargeFont );
+					m_iButtonSize = ((float)fontTall) * 2.0f;
+
+					int iRealSize = m_iButtonSize;
+					CUtlVector <const char *> szStringList;
+					CUtlVector <int> iButtonIcons;
+
 					if (strchr(binding, '&'))
 					{
 						// '&' is a Mapbase feature which allows combinations of buttons to be shown in hints ("%walk&use%" >> "ALT + E")
-						// However, that's not as feasible with controller buttons due to the different fonts used and multiple buttons
-						// for the same binds, so for now we just show double slashes.
-						// (it's probably possible with enough effort though)
-						char szBinding[8] = { 0 };
+						// However, that's not as feasible with controller buttons since they aren't , so for now we just scroll through them
+						// even though that functionality is shared with buttons that have the same actions.
 						char *token = strtok(binding, "&");
 						while (token)
 						{
-							g_pSteamInput->GetGlyphFontForCommand( binding, szBinding, sizeof( szBinding ), hGlyphFont, vgui::scheme()->GetIScheme( GetScheme() ) );
-							Q_snprintf( szLabelText, sizeof( szLabelText ), "%s%s%s", szLabelText, szLabelText[0] == '\0' ? "" : " // ", szBinding[0] != '\0' ? szBinding : pszNotBound );
-
+							g_pSteamInput->GetGlyphPNGsForCommand( szStringList, token, iRealSize );
 							token = strtok(NULL, "&");
 						}
 					}
 					else
-#endif
 					{
-						g_pSteamInput->GetGlyphFontForCommand( binding, szLabelText, sizeof( szLabelText ), hGlyphFont, vgui::scheme()->GetIScheme( GetScheme() ) );
-
-						if ( strlen( szLabelText ) > 1 )
-						{
-							m_bScrollingBinds = true;
-							m_bBindingChoicesWereAllocated = true;
-
-							for (int i = 0; i < sizeof( szLabelText ); i++)
-							{
-								if (szLabelText[i] == '\0')
-									break;
-							
-								m_pchBindingChoices[labelIdx].AddToTail( new char[2] { szLabelText[i], '\0' } );
-							}
-
-							szLabelText[1] = '\0';
-
-							// UNDONE: Buttons separated by / instead of scrolling
-							//friendlyName[0] = '\0';
-							//
-							//// For now, add / separator
-							//for (int i = 0; i < sizeof( szLabelText ); i++)
-							//{
-							//	if (szLabelText[i] == '\0')
-							//		break;
-							//
-							//	Q_snprintf( friendlyName, sizeof( friendlyName ), "%s%c / ", friendlyName, szLabelText[i] );
-							//}
-							//
-							//// Strip trailing characters
-							//int len = strlen( friendlyName );
-							//if (len >= 3 && friendlyName[len-1] == ' ' && friendlyName[len-2] == '/' && friendlyName[len-3] == ' ')
-							//	friendlyName[len-3] = '\0';
-							//
-							//Q_strncpy( szLabelText, friendlyName, sizeof( szLabelText ) );
-						}
+						g_pSteamInput->GetGlyphPNGsForCommand( szStringList, binding, iRealSize );
 					}
 
-					label->SetFont( hGlyphFont );
-					m_bDontTintButtons = !g_pSteamInput->TintGlyphs();
-					bIsBitmap = m_bDontTintButtons; // Prevents tinting
+					for (int i = 0; i < szStringList.Count(); i++)
+					{
+						CUtlMemory< byte > image;
+						if ( !g_pSteamInput->GetPNGBufferFromFile( szStringList[i], image ) )
+						{
+							Warning( "Can't find PNG buffer for %s\n", szStringList[i] );
+						}
 
-					label->SetText( szLabelText );
+						iButtonIcons.AddToTail( vgui::surface()->CreateNewTextureID( true ) );
+						vgui::surface()->DrawSetTextureRGBA( iButtonIcons[i], image.Base(), iRealSize, iRealSize, true, false );
 
-					// UNDONE: Attempt to get PNG files to display directly via GetIconImageForFullPath()
-					//const char *pszGlyph = g_pSteamInput->GetGlyphPNGForCommand( binding );
-					////const char *pszFile = VarArgs( "file://%s", pszGlyph );
-					//vgui::IImage *pImage = vgui::surface()->GetIconImageForFullPath( pszGlyph );
-					//
-					//label->SetTextImageIndex( 1 );
-					//label->SetImageAtIndex( 0, pImage, 0 );
-					//label->SetImageAtIndex( 1, label->GetTextImage(), 0 );
-					//label->SetText( "" );
-					//
-					//Msg( "Hint PNG: \"%s\"\n", pszGlyph );
-					//
-					//bIsBitmap = true; // Prevents tinting
-					//m_bDontTintButtons = true;
+						int i2 = m_pchBindingChoices[labelIdx].AddToTail();
+						m_pchBindingChoices[labelIdx][i2].i = iButtonIcons[i];
 
-					// UNDONE: Attempt to get the SVG files to display directly via HTML
-					//const char *pszGlyph = g_pSteamInput->GetGlyphSVGForCommand( binding );
-					//if (pszGlyph)
-					//{
-					//	// Load the glyph file
-					//	const char *pszFile = VarArgs( "file://%s", pszGlyph );
-					//
-					//	label->MarkForDeletion();
-					//	vgui::HTML *html = vgui::SETUP_PANEL(new vgui::HTML(this, NULL));
-					//
-					//	html->OpenURL( pszFile, NULL );
-					//
-					//	int fontTall = vgui::surface()->GetFontTall( m_hLargeFont );
-					//	html->SetWide( fontTall );
-					//
-					//	html->SetVisible( true );
-					//	html->SetPaintBackgroundEnabled( false );
-					//	html->SetPaintBorderEnabled( false );
-					//	if ( true ) // TODO
-					//	{
-					//		// Don't change the color of the button art
-					//		html->SetFgColor( Color(255,255,255,255) );
-					//	}
-					//	else
-					//	{
-					//		html->SetFgColor( GetFgColor() );
-					//	}
-					//	m_Labels.AddToTail( vgui::SETUP_PANEL(html) );
-					//}
-					//continue;
+						//Msg( "Hint PNG: \"%s\" (%i)\n", szStringList[i], iButtonIcons[i] );
+					}
+
+					if ( szStringList.Count() > 1)
+					{
+						m_bScrollingBinds = true;
+					}
+					else if (szStringList.Count() == 0)
+					{
+						Warning( "No button PNGs found for \"%s\"\n", binding );
+					}
+
+					m_ButtonIcons.AddVectorToTail( iButtonIcons );
+					
+					bIsBitmap = true; // Prevents tinting
+					m_bDontTintButtons = true;
 				}
 				else
 				{
@@ -773,7 +794,8 @@ bool CHudHintKeyDisplay::SetHintText( const char *text )
 							
 							for (int i = 0; i < szStringList.Count(); i++)
 							{
-								m_pchBindingChoices[labelIdx].AddToTail( szStringList[i] );
+								int i2 = m_pchBindingChoices[labelIdx].AddToTail();
+								m_pchBindingChoices[labelIdx][i2].psz = szStringList[i];
 							}
 						}
 
@@ -958,6 +980,13 @@ bool CHudHintKeyDisplay::SetHintText( const char *text )
 		}
 		else
 		{
+#ifdef STEAM_INPUT
+			if (m_ButtonIcons.Count() > 0)
+			{
+				label->SetSize( m_iButtonSize, m_iButtonSize );
+			}
+#endif
+
 			// variable
 			if (label->GetWide() > widest1)
 			{

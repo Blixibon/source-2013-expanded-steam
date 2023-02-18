@@ -36,7 +36,7 @@
 #endif
 
 #ifdef STEAM_INPUT
-#include "in_steaminput.h"
+#include "expanded_steam/isteaminput.h"
 #endif
 
 #ifdef HL2_CLIENT_DLL

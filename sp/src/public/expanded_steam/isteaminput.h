@@ -13,13 +13,16 @@
 #pragma once
 #endif
 
+#include "tier1/interface.h"
+#include "tier1/utlvector.h"
+#include "appframework/IAppSystem.h"
+#include "inputsystem/InputEnums.h"
+#include <vgui/IVGui.h>
+#include <vgui/IScheme.h>
+
 //-----------------------------------------------------------------------------
 
 #define IsDeck() (CommandLine()->CheckParm("-deck") != 0)
-
-//-----------------------------------------------------------------------------
-
-void UTIL_ReplaceKeyBindingsWithGlyphs( const wchar_t *inbuf, int inbufsizebytes, OUT_Z_BYTECAP( outbufsizebytes ) wchar_t *outbuf, int outbufsizebytes, vgui::HFont &hFont, vgui::IScheme *pScheme );
 
 //-----------------------------------------------------------------------------
 
@@ -32,64 +35,56 @@ typedef uint64 InputDigitalActionHandle_t;
 typedef uint64 InputAnalogActionHandle_t;
 #endif
 
-//-----------------------------------------------------------------------------
-
 struct InputDigitalActionBind_t
 {
-	InputDigitalActionHandle_t handle;
-	InputHandle_t controller; // The last controller pressing if it is down
-	bool bDown;
+	InputDigitalActionHandle_t handle = 0;
+	InputHandle_t controller = 0; // The last controller pressing if it is down
+	bool bDown = false;
 
 	virtual void OnDown() { ; }
 	virtual void OnUp() { ; }
 };
 
-struct InputDigitalActionCommandBind_t : public InputDigitalActionBind_t
+enum ActionSet_t
 {
-	InputDigitalActionCommandBind_t( const char *_pszActionName, const char *_pszBindCommand )
-	{
-		pszActionName = _pszActionName;
-		pszBindCommand = _pszBindCommand;
-	}
-
-	const char *pszActionName;
-	const char *pszBindCommand;
-
-	virtual void OnDown()
-	{
-		engine->ClientCmd_Unrestricted( VarArgs( "%s\n", pszBindCommand ) );
-	}
-
-	virtual void OnUp()
-	{
-		if (pszBindCommand[0] == '+')
-		{
-			// Unpress the bind
-			engine->ClientCmd_Unrestricted( VarArgs( "-%s\n", pszBindCommand+1 ) );
-		}
-	}
+	AS_GameControls,
+	AS_VehicleControls,
+	AS_MenuControls,
 };
+
+//-----------------------------------------------------------------------------
+
+// Not to be confused with STEAMINPUT_INTERFACE_VERSION
+#define SOURCE2013STEAMINPUT_INTERFACE_VERSION		"Source2013SteamInput001"
 
 abstract_class ISource2013SteamInput
 {
 public:
 
-	virtual void Init() = 0;
+	virtual void Initialize( CreateInterfaceFn factory ) = 0;
+	virtual void Shutdown() = 0;
+
+	virtual void InitSteamInput() = 0;
 
 	virtual void LevelInitPreEntity() = 0;
 
-	virtual void RunFrame() = 0;
+	virtual void RunFrame( ActionSet_t &iActionSet ) = 0;
 	
 	// "Enabled" just means a controller is being used
 	virtual bool IsEnabled() = 0;
 
 	//-----------------------------------------------------------------------------
+
+	virtual bool IsSteamRunningOnSteamDeck() = 0;
+	virtual void SetGamepadUI( bool bToggle ) = 0;
 	
 	virtual InputHandle_t GetActiveController() = 0;
 	virtual int GetConnectedControllers( InputHandle_t *nOutHandles ) = 0;
 
 	virtual const char *GetControllerName( InputHandle_t nController ) = 0;
 	virtual int GetControllerType( InputHandle_t nController ) = 0;
+
+	virtual bool ShowBindingPanel( InputHandle_t nController ) = 0;
 
 	//-----------------------------------------------------------------------------
 
@@ -108,12 +103,12 @@ public:
 	//-----------------------------------------------------------------------------
 
 	virtual bool UseGlyphs() = 0;
-	virtual bool TintGlyphs() = 0;
-	virtual void GetGlyphFontForCommand( const char *pszCommand, char *szChars, int szCharsSize, vgui::HFont &hFont, vgui::IScheme *pScheme ) = 0;
 	virtual void GetButtonStringsForCommand( const char *pszCommand, CUtlVector<const char*> &szStringList, int iActionSet = -1 ) = 0;
 
-	virtual const char *GetGlyphPNGForCommand( const char *pszCommand ) = 0;
-	virtual const char *GetGlyphSVGForCommand( const char *pszCommand ) = 0;
+	virtual void GetGlyphPNGsForCommand( CUtlVector<const char*> &szImgList, const char *pszCommand, int &iSize, int iStyle = 0 ) = 0;
+	virtual void GetGlyphSVGsForCommand( CUtlVector<const char*> &szImgList, const char *pszCommand ) = 0;
+
+	virtual bool GetPNGBufferFromFile( const char *filename, CUtlMemory< byte > &buffer ) = 0;
 
 	//-----------------------------------------------------------------------------
 
@@ -122,6 +117,7 @@ public:
 private:
 };
 
-extern ISource2013SteamInput *g_pSteamInput;
+// TODO: Replace with proper singleton interface in the future
+ISource2013SteamInput *CreateSource2013SteamInput();
 
 #endif // IN_MAIN_H

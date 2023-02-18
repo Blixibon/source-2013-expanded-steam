@@ -59,6 +59,9 @@ class IEngineReplay;
 class IEngineClientReplay;
 class IReplayScreenshotManager;
 class CSteamID;
+#ifdef STEAM_INPUT
+class ISource2013SteamInput;
+#endif
 
 //=============================================================================
 // HPE_BEGIN
@@ -110,6 +113,9 @@ extern IReplayManager *g_pReplayManager;
 extern IReplayScreenshotManager *g_pReplayScreenshotManager;
 extern IEngineReplay *g_pEngineReplay;
 extern IEngineClientReplay *g_pEngineClientReplay;
+#ifdef STEAM_INPUT
+extern ISource2013SteamInput *g_pSteamInput;
+#endif
 
 //=============================================================================
 // HPE_BEGIN

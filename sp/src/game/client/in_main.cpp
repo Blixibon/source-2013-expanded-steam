@@ -31,7 +31,7 @@
 #endif
 
 #ifdef STEAM_INPUT
-#include "in_steaminput.h"
+#include "expanded_steam/isteaminput.h"
 #include "c_prop_vehicle.h"
 #endif
 
@@ -1192,7 +1192,24 @@ void CInput::CreateMove ( int sequence_number, float input_sample_frametime, boo
 	QAngle originalViewangles = viewangles;
 
 #ifdef STEAM_INPUT
-	g_pSteamInput->RunFrame();
+	ActionSet_t iActionSet = AS_MenuControls;
+	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+	if (pPlayer)
+	{
+		if (!engine->IsPaused() && !engine->IsLevelMainMenuBackground())
+		{
+			if (pPlayer->GetVehicle())
+			{
+				iActionSet = AS_VehicleControls;
+			}
+			else
+			{
+				iActionSet = AS_GameControls;
+			}
+		}
+	}
+
+	g_pSteamInput->RunFrame( iActionSet );
 #endif
 
 	if ( active || sv_noclipduringpause.GetInt() )
@@ -1760,7 +1777,7 @@ void CInput::Init_All (void)
 	Init_Camera();
 
 #ifdef STEAM_INPUT
-	g_pSteamInput->Init();
+	g_pSteamInput->InitSteamInput();
 #endif
 }
 
@@ -1779,6 +1796,10 @@ void CInput::Shutdown_All(void)
 
 	delete[] m_pVerifiedCommands;
 	m_pVerifiedCommands = NULL;
+
+#ifdef STEAM_INPUT
+	g_pSteamInput->Shutdown();
+#endif
 }
 
 void CInput::LevelInit( void )
