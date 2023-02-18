@@ -6,25 +6,51 @@
 //
 // $NoKeywords: $
 //=============================================================================//
-#include "cbase.h"
-#include "input.h"
+
+#include "expanded_steam/isteaminput.h"
+
 #include "inputsystem/iinputsystem.h"
 #include "GameUI/IGameUI.h"
 #include "IGameUIFuncs.h"
 #include "ienginevgui.h"
-#include <vgui/IVGui.h>
 #include <vgui/IInput.h>
-#include <vgui/IScheme.h>
 #include <vgui/ILocalize.h>
-#include "clientmode_shared.h"
-#include "weapon_parse.h"
+#include <vgui_controls/Controls.h>
 #include "steam/isteaminput.h"
 #include "steam/isteamutils.h"
-#include "in_steaminput.h"
 #include "icommandline.h"
+#include "cdll_int.h"
+#include "tier1/convar.h"
+#include "tier1/strtools.h"
+#include "tier1/utlbuffer.h"
+#include "tier2/tier2.h"
+#include "tier3/tier3.h"
+#include "filesystem.h"
+
+#include "libpng/png.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
+
+//-------------------------------------------
+
+IVEngineClient *g_pEngineClient = NULL;
+IEngineVGui *g_pEngineVGui = NULL;
+
+// Copied from cdll_util.cpp
+char *SteamInput_VarArgs( const char *format, ... )
+{
+	va_list		argptr;
+	static char		string[1024];
+	
+	va_start (argptr, format);
+	Q_vsnprintf (string, sizeof( string ), format,argptr);
+	va_end (argptr);
+
+	return string;	
+}
+
+//-------------------------------------------
 
 #define USE_HL2_INSTALLATION 1 // This attempts to obtain HL2's action manifest from the user's own HL2 or Portal installations
 #define MENU_ACTIONS_ARE_BINDS 1
@@ -33,57 +59,52 @@ InputActionSetHandle_t g_AS_GameControls;
 InputActionSetHandle_t g_AS_VehicleControls;
 InputActionSetHandle_t g_AS_MenuControls;
 
-enum ActionSet_t
-{
-	AS_GameControls,
-	AS_VehicleControls,
-	AS_MenuControls,
-};
-
 //-------------------------------------------
 
-static InputDigitalActionCommandBind_t g_DigitalActionBinds[] = {
-	{ "attack",							"+attack" },
-	{ "attack2",						"+attack2" },
-	{ "zoom",							"+zoom" },
-	{ "reload",							"+reload" },
-	{ "jump",							"+jump" },
-	{ "duck",							"+duck" },
-	{ "use",							"+use" },
-	{ "invnext",						"invnext" },
-	{ "invprev",						"invprev" },
-	{ "lastinv",						"lastinv" },
-	{ "walk",							"+walk" },
-	{ "speed",							"+speed" },
-	{ "pause_menu",						"pause_menu" },
-	{ "sc_flashlight",					"impulse 100" }, // sc_flashlight
-	{ "sc_squad",						"impulse 50" }, // sc_squad
-	{ "lookspin",						"+lookspin" },
-	{ "resetcamera",					"+resetcamera" },
-	{ "slot1",							"slot1" },
-	{ "slot2",							"slot2" },
-	{ "slot3",							"slot3" },
-	{ "slot4",							"slot4" },
-	{ "phys_swap",						"phys_swap" },
-	{ "bug_swap",						"bug_swap" },
-	{ "sc_save_quick",					"save quick" }, // sc_save_quick
-	{ "sc_load_quick",					"load quick" }, // sc_load_quick
+struct InputDigitalActionCommandBind_t : public InputDigitalActionBind_t
+{
+	InputDigitalActionCommandBind_t()
+	{
+		pszActionName = NULL;
+		pszBindCommand = NULL;
+	}
 
-	{ "toggle_zoom",					"toggle_zoom" },
-	{ "toggle_duck",					"toggle_duck" },
+	InputDigitalActionCommandBind_t( const char *_pszActionName, const char *_pszBindCommand )
+	{
+		pszActionName = _pszActionName;
+		pszBindCommand = _pszBindCommand;
+	}
 
-	// Custom
-	{ "attack3",						"+attack3" },
-	{ "screenshot",						"jpeg" },
+	const char *pszActionName;
+	const char *pszBindCommand;
+
+	void OnDown() override
+	{
+		g_pEngineClient->ClientCmd_Unrestricted( SteamInput_VarArgs( "%s\n", pszBindCommand ) );
+	}
+
+	void OnUp() override
+	{
+		if (pszBindCommand[0] == '+')
+		{
+			// Unpress the bind
+			g_pEngineClient->ClientCmd_Unrestricted( SteamInput_VarArgs( "-%s\n", pszBindCommand+1 ) );
+		}
+	}
 };
 
-// Keep in sync with the above array!!!
-#define ZOOM_ACTION_BIND_INDEX 2
-#define BRAKE_ACTION_BIND_INDEX 4
-#define DUCK_ACTION_BIND_INDEX 5
-#define PAUSE_ACTION_BIND_INDEX 12
-#define TOGGLE_ZOOM_ACTION_BIND_INDEX 25
-#define TOGGLE_DUCK_ACTION_BIND_INDEX 26
+static CUtlVector<InputDigitalActionCommandBind_t> g_DigitalActionBinds;
+
+// Stores strings parsed for action binds
+static CUtlStringList g_DigitalActionBindNames;
+
+// Special cases from the above
+InputDigitalActionBind_t *g_DAB_Zoom;
+InputDigitalActionBind_t *g_DAB_Brake;
+InputDigitalActionBind_t *g_DAB_Duck;
+InputDigitalActionBind_t *g_DAB_MenuPause;
+InputDigitalActionBind_t *g_DAB_Toggle_Zoom;
+InputDigitalActionBind_t *g_DAB_Toggle_Duck;
 
 //-------------------------------------------
 
@@ -97,8 +118,6 @@ InputAnalogActionHandle_t g_AA_Steer;
 InputAnalogActionHandle_t g_AA_Accelerate;
 InputAnalogActionHandle_t g_AA_Brake;
 
-InputDigitalActionBind_t *g_DAB_Brake;
-
 //-------------------------------------------
 
 #if MENU_ACTIONS_ARE_BINDS
@@ -110,6 +129,8 @@ InputDigitalActionBind_t g_DAB_MenuSelect;
 InputDigitalActionBind_t g_DAB_MenuCancel;
 InputDigitalActionBind_t g_DAB_MenuLB;
 InputDigitalActionBind_t g_DAB_MenuRB;
+InputDigitalActionBind_t g_DAB_MenuX;
+InputDigitalActionBind_t g_DAB_MenuY;
 #else
 InputDigitalActionHandle_t g_DA_MenuUp;
 InputDigitalActionHandle_t g_DA_MenuDown;
@@ -120,10 +141,6 @@ InputDigitalActionHandle_t g_DA_MenuCancel;
 InputDigitalActionHandle_t g_DA_MenuLB;
 InputDigitalActionHandle_t g_DA_MenuRB;
 #endif
-InputDigitalActionHandle_t g_DA_MenuX;
-InputDigitalActionHandle_t g_DA_MenuY;
-
-InputDigitalActionBind_t *g_DAB_MenuPause;
 
 InputAnalogActionHandle_t g_AA_Mouse;
 
@@ -131,13 +148,13 @@ InputAnalogActionHandle_t g_AA_Mouse;
 
 CON_COMMAND( pause_menu, "Shortcut to toggle pause menu" )
 {
-	if (enginevgui->IsGameUIVisible())
+	if (g_pEngineVGui->IsGameUIVisible())
 	{
-		engine->ClientCmd_Unrestricted( "gameui_hide" );
+		g_pEngineClient->ClientCmd_Unrestricted( "gameui_hide" );
 	}
 	else
 	{
-		engine->ClientCmd_Unrestricted( "gameui_activate" );
+		g_pEngineClient->ClientCmd_Unrestricted( "gameui_activate" );
 	}
 }
 
@@ -149,7 +166,6 @@ static ConVar si_force_glyph_controller( "si_force_glyph_controller", "-1", FCVA
 static ConVar si_default_glyph_controller( "si_default_glyph_controller", "0", FCVAR_NONE, "The default ESteamInputType to use when a controller's glyphs aren't available." );
 
 static ConVar si_use_glyphs( "si_use_glyphs", "1", FCVAR_NONE, "Whether or not to use controller glyphs for hints." );
-static ConVar si_tint_glyphs( "si_tint_glyphs", "0", FCVAR_NONE, "Whether or not to tint controller glyphs according to the client scheme." );
 
 static ConVar si_enable_rumble( "si_enable_rumble", "1", FCVAR_NONE, "Enables controller rumble triggering vibration events in Steam Input. If disabled, rumble is directed back to the input system as before." );
 
@@ -173,28 +189,36 @@ public:
 
 	~CSource2013SteamInput();
 
-	void Init() override;
+	void Initialize( CreateInterfaceFn factory ) override;
+
+	void InitSteamInput() override;
 	void InitActionManifest();
 
 	void LevelInitPreEntity() override;
 
-	void Shutdown();
+	void Shutdown() override;
 
-	void RunFrame() override;
+	void RunFrame( ActionSet_t &iActionSet ) override;
 	
 	bool IsEnabled() override;
 
 	//-------------------------------------------
+
+	bool IsSteamRunningOnSteamDeck() override;
+	void SetGamepadUI( bool bToggle ) override;
 	
 	InputHandle_t GetActiveController() override;
 	int GetConnectedControllers( InputHandle_t *nOutHandles ) override;
-	
+
 	const char *GetControllerName( InputHandle_t nController ) override;
 	int GetControllerType( InputHandle_t nController ) override;
 
-	void SwitchActiveController( InputHandle_t nNewController );
+	bool ShowBindingPanel( InputHandle_t nController ) override;
 
 	//-------------------------------------------
+
+	void LoadActionBinds( const char *pszFileName );
+	InputDigitalActionCommandBind_t *FindActionBind( const char *pszActionName );
 
 	bool TestActions( int iActionSet, InputHandle_t nController );
 
@@ -223,14 +247,13 @@ public:
 	int FindAnalogActionsForCommand( const char *pszCommand, InputAnalogActionHandle_t *pHandles );
 	void GetInputActionOriginsForCommand( const char *pszCommand, CUtlVector<EInputActionOrigin> &actionOrigins, int iActionSetOverride = -1 );
 
-	const char *GetGlyphForCommand( const char *pszCommand, bool bSVG );
-	const char *GetGlyphPNGForCommand( const char *pszCommand ) override { return GetGlyphForCommand( pszCommand, false ); }
-	const char *GetGlyphSVGForCommand( const char *pszCommand ) override { return GetGlyphForCommand( pszCommand, true ); }
+	void GetGlyphPNGsForCommand( CUtlVector<const char*> &szImgList, const char *pszCommand, int &iSize, int iStyle ) override;
+	void GetGlyphSVGsForCommand( CUtlVector<const char*> &szImgList, const char *pszCommand ) override;
 
 	virtual bool UseGlyphs() override { return si_use_glyphs.GetBool(); };
-	virtual bool TintGlyphs() override { return si_tint_glyphs.GetBool(); };
-	void GetGlyphFontForCommand( const char *pszCommand, char *szChars, int szCharsSize, vgui::HFont &hFont, vgui::IScheme *pScheme ) override;
-	void GetButtonStringsForCommand( const char *pszCommand, CUtlVector<const char*> &szStringList, int iActionSet = -1 ) override;
+	void GetButtonStringsForCommand( const char *pszCommand, CUtlVector<const char *> &szStringList, int iActionSet = -1 ) override;
+
+	bool GetPNGBufferFromFile( const char *filename, CUtlMemory< byte > &buffer ) override;
 
 	//-------------------------------------------
 
@@ -246,9 +269,6 @@ private:
 	void DeckConnected( InputHandle_t nDeviceHandle );
 
 	//-------------------------------------------
-	
-	// Utilizes fonts
-	char LookupGlyphCharForActionOrigin( EInputActionOrigin eAction, vgui::HFont &hFont, vgui::IScheme *pScheme );
 
 	// Provides a description for the specified action using GetStringForActionOrigin()
 	const char *LookupDescriptionForActionOrigin( EInputActionOrigin eAction );
@@ -258,11 +278,13 @@ private:
 	bool m_bEnabled;
 
 	// Handle to the active controller (may change depending on last input)
-	InputHandle_t m_nControllerHandle;
+	InputHandle_t m_nControllerHandle = 0;
 
 	InputAnalogActionData_t m_analogMoveData, m_analogCameraData;
 
 	InputActionSetHandle_t m_iLastActionSet;
+
+	bool m_bIsGamepadUI;
 
 	//-------------------------------------------
 
@@ -291,40 +313,13 @@ private:
 	CUtlVector< HintRemap_t >	m_HintRemaps;
 };
 
-static CSource2013SteamInput g_SteamInput;
-ISource2013SteamInput *g_pSteamInput = &g_SteamInput;
+//EXPOSE_SINGLE_INTERFACE( CSource2013SteamInput, ISource2013SteamInput, SOURCE2013STEAMINPUT_INTERFACE_VERSION );
 
-//-------------------------------------------
-
-CON_COMMAND( si_print_state, "" )
+// TODO: Replace with proper singleton interface in the future
+ISource2013SteamInput *CreateSource2013SteamInput()
 {
-	bool bEnabled = g_pSteamInput->IsEnabled();
-
-	char szState[512];
-	Q_snprintf( szState, sizeof( szState ), "STEAM INPUT: %s\n", bEnabled ? "Enabled" : "Disabled" );
-
-	if (bEnabled)
-	{
-		Q_strncat( szState, "\nLIST OF CONTROLLERS:\n", sizeof( szState ) );
-
-		InputHandle_t inputHandles[STEAM_INPUT_MAX_COUNT];
-		int iNumHandles = SteamInput()->GetConnectedControllers( inputHandles );
-		for (int i = 0; i < iNumHandles; i++)
-		{
-			Q_strncat( szState, VarArgs("\t%s/%i %s\n",
-				g_pSteamInput->GetControllerName( inputHandles[i] ),
-				g_pSteamInput->GetControllerType( inputHandles[i] ),
-				g_pSteamInput->GetActiveController() == inputHandles[i] ? "[ACTIVE]" : ""), sizeof(szState));
-		}
-	}
-
-	Msg( "%s\n", szState );
-}
-
-CON_COMMAND( si_restart, "" )
-{
-	g_SteamInput.Shutdown();
-	g_pSteamInput->Init();
+	static CSource2013SteamInput g_SteamInput;
+	return &g_SteamInput;
 }
 
 //-------------------------------------------
@@ -336,7 +331,15 @@ CSource2013SteamInput::~CSource2013SteamInput()
 
 //-------------------------------------------
 
-void CSource2013SteamInput::Init()
+void CSource2013SteamInput::Initialize( CreateInterfaceFn factory )
+{
+	g_pEngineClient = (IVEngineClient *)factory( VENGINE_CLIENT_INTERFACE_VERSION, NULL );
+	g_pEngineVGui = (IEngineVGui *)factory( VENGINE_VGUI_VERSION, NULL );
+}
+
+//-------------------------------------------
+
+void CSource2013SteamInput::InitSteamInput()
 {
 	bool bInit = false;
 
@@ -355,8 +358,8 @@ void CSource2013SteamInput::Init()
 		if (si_current_cfg.GetString()[0] != '0')
 		{
 			Msg("Reverting leftover Steam Input cvars\n");
-			engine->ClientCmd_Unrestricted( "exec steam_uninput.cfg" );
-			engine->ClientCmd_Unrestricted( VarArgs( "exec steam_uninput_%s.cfg", si_current_cfg.GetString() ) );
+			g_pEngineClient->ClientCmd_Unrestricted( "exec steam_uninput.cfg" );
+			g_pEngineClient->ClientCmd_Unrestricted( SteamInput_VarArgs( "exec steam_uninput_%s.cfg", si_current_cfg.GetString() ) );
 		}
 
 		return;
@@ -365,7 +368,7 @@ void CSource2013SteamInput::Init()
 	Msg( "SteamInput initialized\n" );
 
 	m_bEnabled = false;
-	SteamInput()->EnableDeviceCallbacks();
+	//SteamInput()->EnableDeviceCallbacks();
 
 	g_AS_GameControls		= SteamInput()->GetActionSetHandle( "GameControls" );
 	g_AS_VehicleControls	= SteamInput()->GetActionSetHandle( "VehicleControls" );
@@ -373,12 +376,16 @@ void CSource2013SteamInput::Init()
 
 	SteamInput()->ActivateActionSet( m_nControllerHandle, g_AS_GameControls );
 
-	for (int i = 0; i < ARRAYSIZE( g_DigitalActionBinds ); i++)
-	{
-		g_DigitalActionBinds[i].handle = SteamInput()->GetDigitalActionHandle( g_DigitalActionBinds[i].pszActionName );
-	}
+	// Load the KV
+	LoadActionBinds( "scripts/steaminput_actionbinds.txt" );
 
-	g_DAB_Brake				= &g_DigitalActionBinds[BRAKE_ACTION_BIND_INDEX];
+	// Fill out special cases
+	g_DAB_Zoom				= FindActionBind("zoom");
+	g_DAB_Brake				= FindActionBind("jump");
+	g_DAB_Duck				= FindActionBind("duck");
+	g_DAB_MenuPause			= FindActionBind("pause_menu");
+	g_DAB_Toggle_Zoom		= FindActionBind("toggle_zoom");
+	g_DAB_Toggle_Duck		= FindActionBind("toggle_duck");
 
 	g_AA_Move				= SteamInput()->GetAnalogActionHandle( "Move" );
 	g_AA_Camera				= SteamInput()->GetAnalogActionHandle( "Camera" );
@@ -395,6 +402,8 @@ void CSource2013SteamInput::Init()
 	g_DAB_MenuRight.handle	= SteamInput()->GetDigitalActionHandle( "menu_right" );
 	g_DAB_MenuSelect.handle	= SteamInput()->GetDigitalActionHandle( "menu_select" );
 	g_DAB_MenuCancel.handle	= SteamInput()->GetDigitalActionHandle( "menu_cancel" );
+	g_DAB_MenuX.handle		= SteamInput()->GetDigitalActionHandle( "menu_x" );
+	g_DAB_MenuY.handle		= SteamInput()->GetDigitalActionHandle( "menu_y" );
 	g_DAB_MenuLB.handle		= SteamInput()->GetDigitalActionHandle( "menu_lb" );
 	g_DAB_MenuRB.handle		= SteamInput()->GetDigitalActionHandle( "menu_rb" );
 #else
@@ -407,10 +416,6 @@ void CSource2013SteamInput::Init()
 	g_DA_MenuLB				= SteamInput()->GetDigitalActionHandle( "menu_lb" );
 	g_DA_MenuRB				= SteamInput()->GetDigitalActionHandle( "menu_rb" );
 #endif
-	g_DA_MenuX				= SteamInput()->GetDigitalActionHandle( "menu_x" );
-	g_DA_MenuY				= SteamInput()->GetDigitalActionHandle( "menu_y" );
-
-	g_DAB_MenuPause			= &g_DigitalActionBinds[PAUSE_ACTION_BIND_INDEX];
 
 	SteamInput()->RunFrame();
 
@@ -418,7 +423,7 @@ void CSource2013SteamInput::Init()
 	{
 		if (SteamUtils()->IsSteamRunningOnSteamDeck())
 		{
-			InputHandle_t inputHandles[ STEAM_INPUT_MAX_COUNT ];
+			InputHandle_t inputHandles[STEAM_INPUT_MAX_COUNT];
 			int iNumHandles = SteamInput()->GetConnectedControllers( inputHandles );
 			Msg( "On Steam Deck and number of controllers is %i\n", iNumHandles );
 
@@ -430,8 +435,8 @@ void CSource2013SteamInput::Init()
 		else if (si_current_cfg.GetString()[0] != '0')
 		{
 			Msg("Reverting leftover Steam Input cvars\n");
-			engine->ClientCmd_Unrestricted( "exec steam_uninput.cfg" );
-			engine->ClientCmd_Unrestricted( VarArgs( "exec steam_uninput_%s.cfg", si_current_cfg.GetString() ) );
+			g_pEngineClient->ClientCmd_Unrestricted( "exec steam_uninput.cfg" );
+			g_pEngineClient->ClientCmd_Unrestricted( SteamInput_VarArgs( "exec steam_uninput_%s.cfg", si_current_cfg.GetString() ) );
 		}
 	}
 
@@ -450,7 +455,7 @@ void CSource2013SteamInput::Init()
 void CSource2013SteamInput::InitActionManifest()
 {
 	// First, check for a mod-specific action manifest
-	if (filesystem->FileExists( ACTION_MANIFEST_MOD, "MOD" ))
+	if (g_pFullFileSystem->FileExists( ACTION_MANIFEST_MOD, "MOD" ))
 	{
 		char szFullPath[MAX_PATH];
 		g_pFullFileSystem->RelativePathToFullPath( ACTION_MANIFEST_MOD, "MOD", szFullPath, sizeof( szFullPath ) );
@@ -460,11 +465,10 @@ void CSource2013SteamInput::InitActionManifest()
 		SteamInput()->SetInputActionManifestFilePath( szFullPath );
 	}
 #if USE_HL2_INSTALLATION
-	// We don't need to make this specific to SDK 2013. Steam mods which don't want this behavior can toggle USE_HL2_INSTALLATION and/or use action_manifest_mod.vdf
-	else //if (SteamUtils()->GetAppID() == 243730 || SteamUtils()->GetAppID() == 243750)
+	else if (SteamUtils()->GetAppID() == 243730 || SteamUtils()->GetAppID() == 243750)
 	{
 		char szCurDir[MAX_PATH];
-		filesystem->GetCurrentDirectory( szCurDir, sizeof( szCurDir ) );
+		g_pFullFileSystem->GetCurrentDirectory( szCurDir, sizeof( szCurDir ) );
 
 		char szTargetApp[MAX_PATH];
 		Q_snprintf( szTargetApp, sizeof( szTargetApp ), ACTION_MANIFEST_RELATIVE_HL2, szCurDir );
@@ -491,6 +495,49 @@ void CSource2013SteamInput::InitActionManifest()
 #endif
 }
 
+void CSource2013SteamInput::LoadActionBinds( const char *pszFileName )
+{
+	KeyValues *pKV = new KeyValues("ActionBinds");
+	if ( pKV->LoadFromFile( g_pFullFileSystem, pszFileName ) )
+	{
+		// Parse each action bind
+		KeyValues *pKVAction = pKV->GetFirstSubKey();
+		while ( pKVAction )
+		{
+			InputDigitalActionHandle_t action = SteamInput()->GetDigitalActionHandle( pKVAction->GetName() );
+			if ( action != 0 )
+			{
+				int i = g_DigitalActionBinds.AddToTail();
+				g_DigitalActionBinds[i].handle = action;
+
+				g_DigitalActionBindNames.CopyAndAddToTail( pKVAction->GetName() );
+				g_DigitalActionBinds[i].pszActionName = g_DigitalActionBindNames.Tail();
+
+				g_DigitalActionBindNames.CopyAndAddToTail( pKVAction->GetString() );
+				g_DigitalActionBinds[i].pszBindCommand = g_DigitalActionBindNames.Tail();
+			}
+			else
+			{
+				Warning("Invalid Steam Input action \"%s\"\n", pKVAction->GetName());
+			}
+
+			pKVAction = pKVAction->GetNextKey();
+		}
+	}
+	pKV->deleteThis();
+}
+
+InputDigitalActionCommandBind_t *CSource2013SteamInput::FindActionBind( const char *pszActionName )
+{
+	for (int i = 0; i < g_DigitalActionBinds.Count(); i++)
+	{
+		if (!V_strcmp( pszActionName, g_DigitalActionBinds[i].pszActionName ))
+			return &g_DigitalActionBinds[i];
+	}
+
+	return NULL;
+}
+
 void CSource2013SteamInput::LevelInitPreEntity()
 {
 	if (IsEnabled())
@@ -505,6 +552,9 @@ void CSource2013SteamInput::Shutdown()
 {
 	SteamInput()->Shutdown();
 	m_nControllerHandle = 0;
+
+	g_DigitalActionBindNames.PurgeAndDeleteElements();
+	g_DigitalActionBinds.RemoveAll();
 }
 
 //-------------------------------------------
@@ -553,7 +603,7 @@ void CSource2013SteamInput::InputDeviceConnected( InputHandle_t nDeviceHandle )
 	m_nControllerHandle = nDeviceHandle;
 	m_bEnabled = true;
 
-	engine->ClientCmd_Unrestricted( "exec steam_input.cfg" );
+	g_pEngineClient->ClientCmd_Unrestricted( "exec steam_input.cfg" );
 
 	ESteamInputType inputType = SteamInput()->GetInputTypeForHandle( m_nControllerHandle );
 	const char *pszInputPrintType = IdentifyControllerParam( inputType );
@@ -562,14 +612,14 @@ void CSource2013SteamInput::InputDeviceConnected( InputHandle_t nDeviceHandle )
 
 	if (pszInputPrintType)
 	{
-		engine->ClientCmd_Unrestricted( VarArgs( "exec steam_input_%s.cfg", pszInputPrintType ) );
+		g_pEngineClient->ClientCmd_Unrestricted( SteamInput_VarArgs( "exec steam_input_%s.cfg", pszInputPrintType ) );
 		si_current_cfg.SetValue( pszInputPrintType );
 	}
 
-	if ( engine->IsConnected() )
+	if (g_pEngineClient->IsConnected() )
 	{
 		// Refresh weapon buckets
-		PrecacheFileWeaponInfoDatabase( filesystem, g_pGameRules->GetEncryptionKey() );
+		g_pEngineClient->ClientCmd_Unrestricted( "weapon_precache_weapon_info_database\n" );
 	}
 }
 
@@ -580,7 +630,7 @@ void CSource2013SteamInput::InputDeviceDisconnected( InputHandle_t nDeviceHandle
 	m_nControllerHandle = 0;
 	m_bEnabled = false;
 
-	engine->ClientCmd_Unrestricted( "exec steam_uninput.cfg" );
+	g_pEngineClient->ClientCmd_Unrestricted( "exec steam_uninput.cfg" );
 
 	const char *pszInputPrintType = NULL;
 	ESteamInputType inputType = SteamInput()->GetInputTypeForHandle( nDeviceHandle );
@@ -588,15 +638,15 @@ void CSource2013SteamInput::InputDeviceDisconnected( InputHandle_t nDeviceHandle
 
 	if (pszInputPrintType)
 	{
-		engine->ClientCmd_Unrestricted( VarArgs( "exec steam_uninput_%s.cfg", pszInputPrintType ) );
+		g_pEngineClient->ClientCmd_Unrestricted( SteamInput_VarArgs( "exec steam_uninput_%s.cfg", pszInputPrintType ) );
 	}
 
 	si_current_cfg.SetValue( "0" );
 
-	if ( engine->IsConnected() )
+	if ( g_pEngineClient->IsConnected() )
 	{
 		// Refresh weapon buckets
-		PrecacheFileWeaponInfoDatabase( filesystem, g_pGameRules->GetEncryptionKey() );
+		g_pEngineClient->ClientCmd_Unrestricted( "weapon_precache_weapon_info_database\n" );
 	}
 }
 
@@ -609,7 +659,7 @@ void CSource2013SteamInput::InputDeviceChanged( InputHandle_t nOldHandle, InputH
 
 	if (pszInputPrintType)
 	{
-		engine->ClientCmd_Unrestricted( VarArgs( "exec steam_uninput_%s.cfg", pszInputPrintType ) );
+		g_pEngineClient->ClientCmd_Unrestricted( SteamInput_VarArgs( "exec steam_uninput_%s.cfg", pszInputPrintType ) );
 	}
 
 	// Connect new controller
@@ -622,7 +672,7 @@ void CSource2013SteamInput::InputDeviceChanged( InputHandle_t nOldHandle, InputH
 
 	if (pszNewInputPrintType)
 	{
-		engine->ClientCmd_Unrestricted( VarArgs( "exec steam_input_%s.cfg", pszNewInputPrintType ) );
+		g_pEngineClient->ClientCmd_Unrestricted( SteamInput_VarArgs( "exec steam_input_%s.cfg", pszNewInputPrintType ) );
 		si_current_cfg.SetValue( pszNewInputPrintType );
 	}
 }
@@ -634,19 +684,21 @@ void CSource2013SteamInput::DeckConnected( InputHandle_t nDeviceHandle )
 	m_nControllerHandle = nDeviceHandle;
 	m_bEnabled = true;
 
-	engine->ClientCmd_Unrestricted( "exec steam_input.cfg" );
-	engine->ClientCmd_Unrestricted( "exec steam_input_deck.cfg" );
+	g_pEngineClient->ClientCmd_Unrestricted( "exec steam_input.cfg" );
+	g_pEngineClient->ClientCmd_Unrestricted( "exec steam_input_deck.cfg" );
 	si_current_cfg.SetValue( "deck" );
 }
 
 //-------------------------------------------
 
-void CSource2013SteamInput::RunFrame()
+void CSource2013SteamInput::RunFrame( ActionSet_t &iActionSet )
 {
 	SteamInput()->RunFrame();
 
 	static InputHandle_t inputHandles[STEAM_INPUT_MAX_COUNT];
 	int iNumHandles = SteamInput()->GetConnectedControllers( inputHandles );
+
+	//Msg( "Number of handles is %i!!! (inputHandles[0] is %llu, m_nControllerHandle is %llu)\n", iNumHandles, inputHandles[0], m_nControllerHandle );
 
 	if (iNumHandles <= 0)
 	{
@@ -660,24 +712,6 @@ void CSource2013SteamInput::RunFrame()
 
 	//if (!SteamInput()->BNewDataAvailable())
 	//	return;
-
-	int iActionSet = AS_MenuControls;
-
-	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
-	if( pPlayer )
-	{
-		if ( !engine->IsPaused() && !engine->IsLevelMainMenuBackground() )
-		{
-			if (pPlayer->GetVehicle())
-			{
-				iActionSet = AS_VehicleControls;
-			}
-			else
-			{
-				iActionSet = AS_GameControls;
-			}
-		}
-	}
 
 	// Reset the analog data
 	m_analogMoveData = m_analogCameraData = InputAnalogActionData_t();
@@ -732,6 +766,16 @@ bool CSource2013SteamInput::IsEnabled()
 	return m_bEnabled;
 }
 
+bool CSource2013SteamInput::IsSteamRunningOnSteamDeck()
+{
+	return SteamUtils()->IsSteamRunningOnSteamDeck();
+}
+
+void CSource2013SteamInput::SetGamepadUI( bool bToggle )
+{
+	m_bIsGamepadUI = bToggle;
+}
+
 InputHandle_t CSource2013SteamInput::GetActiveController()
 {
 	return m_nControllerHandle;
@@ -759,6 +803,11 @@ int CSource2013SteamInput::GetControllerType( InputHandle_t nController )
 	return SteamInput()->GetInputTypeForHandle( nController );
 }
 
+bool CSource2013SteamInput::ShowBindingPanel( InputHandle_t nController )
+{
+	return SteamInput()->ShowBindingPanel( nController );
+}
+
 bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nController )
 {
 	bool bActiveInput = false;
@@ -770,7 +819,7 @@ bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nControll
 			SteamInput()->ActivateActionSet( nController, g_AS_GameControls );
 			
 			// Run commands for all digital actions
-			for (int i = 0; i < ARRAYSIZE( g_DigitalActionBinds ); i++)
+			for (int i = 0; i < g_DigitalActionBinds.Count(); i++)
 			{
 				TestDigitalActionBind( nController, &g_DigitalActionBinds[i], bActiveInput );
 			}
@@ -799,7 +848,7 @@ bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nControll
 			SteamInput()->ActivateActionSet( nController, g_AS_VehicleControls );
 			
 			// Run commands for all digital actions
-			for (int i = 0; i < ARRAYSIZE( g_DigitalActionBinds ); i++)
+			for (int i = 0; i < g_DigitalActionBinds.Count(); i++)
 			{
 				TestDigitalActionBind( nController, &g_DigitalActionBinds[i], bActiveInput );
 			}
@@ -830,11 +879,11 @@ bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nControll
 				steerData = SteamInput()->GetAnalogActionData( nController, g_AA_Brake );
 				if (steerData.x >= 0.25f)
 				{
-					engine->ClientCmd_Unrestricted( "+jump" );
+					g_pEngineClient->ClientCmd_Unrestricted( "+jump" );
 				}
 				else
 				{
-					engine->ClientCmd_Unrestricted( "-jump" );
+					g_pEngineClient->ClientCmd_Unrestricted( "-jump" );
 				}
 			}
 
@@ -850,15 +899,34 @@ bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nControll
 		{
 			SteamInput()->ActivateActionSet( nController, g_AS_MenuControls );
 
+			//if (!SteamInput()->BNewDataAvailable())
+			//	break;
+
 #if MENU_ACTIONS_ARE_BINDS
-			PressKeyFromDigitalActionHandle( nController, g_DAB_MenuUp, KEY_UP, bActiveInput ); // KEY_XBUTTON_UP
-			PressKeyFromDigitalActionHandle( nController, g_DAB_MenuDown, KEY_DOWN, bActiveInput ); // KEY_XBUTTON_DOWN
-			PressKeyFromDigitalActionHandle( nController, g_DAB_MenuLeft, KEY_LEFT, bActiveInput ); // KEY_XBUTTON_LEFT
-			PressKeyFromDigitalActionHandle( nController, g_DAB_MenuRight, KEY_RIGHT, bActiveInput ); // KEY_XBUTTON_RIGHT
-			PressKeyFromDigitalActionHandle( nController, g_DAB_MenuSelect, KEY_XBUTTON_A, bActiveInput );
-			PressKeyFromDigitalActionHandle( nController, g_DAB_MenuCancel, KEY_XBUTTON_B, bActiveInput );
-			PressKeyFromDigitalActionHandle( nController, g_DAB_MenuLB, KEY_XBUTTON_LEFT, bActiveInput ); // KEY_XBUTTON_LEFT_SHOULDER
-			PressKeyFromDigitalActionHandle( nController, g_DAB_MenuRB, KEY_XBUTTON_RIGHT, bActiveInput ); // KEY_XBUTTON_RIGHT_SHOULDER
+			if (m_bIsGamepadUI)
+			{
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuUp, KEY_XBUTTON_UP, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuDown, KEY_XBUTTON_DOWN, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuLeft, KEY_XBUTTON_LEFT, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuRight, KEY_XBUTTON_RIGHT, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuSelect, KEY_XBUTTON_A, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuCancel, KEY_XBUTTON_B, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuX, KEY_XBUTTON_X, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuY, KEY_XBUTTON_Y, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuLB, KEY_XBUTTON_LEFT_SHOULDER, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuRB, KEY_XBUTTON_RIGHT_SHOULDER, bActiveInput );
+			}
+			else
+			{
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuUp, KEY_UP, bActiveInput ); // KEY_XBUTTON_UP
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuDown, KEY_DOWN, bActiveInput ); // KEY_XBUTTON_DOWN
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuLeft, KEY_LEFT, bActiveInput ); // KEY_XBUTTON_LEFT
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuRight, KEY_RIGHT, bActiveInput ); // KEY_XBUTTON_RIGHT
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuSelect, KEY_XBUTTON_A, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuCancel, KEY_XBUTTON_B, bActiveInput );
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuLB, KEY_XBUTTON_LEFT, bActiveInput ); // KEY_XBUTTON_LEFT_SHOULDER
+				PressKeyFromDigitalActionHandle( nController, g_DAB_MenuRB, KEY_XBUTTON_RIGHT, bActiveInput ); // KEY_XBUTTON_RIGHT_SHOULDER
+			}
 #else
 			PressKeyFromDigitalActionHandle( nController, g_DA_MenuUp, KEY_UP, bActiveInput ); // KEY_XBUTTON_UP
 			PressKeyFromDigitalActionHandle( nController, g_DA_MenuDown, KEY_DOWN, bActiveInput ); // KEY_XBUTTON_DOWN
@@ -874,16 +942,19 @@ bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nControll
 
 			TestDigitalActionBind( nController, g_DAB_MenuPause, bActiveInput );
 
-			//InputDigitalActionData_t xData = SteamInput()->GetDigitalActionData( nController, g_DA_MenuX );
-			InputDigitalActionData_t yData = SteamInput()->GetDigitalActionData( nController, g_DA_MenuY );
-
-			//if (xData.bState)
-			//	engine->ClientCmd_Unrestricted( "gamemenucommand OpenOptionsDialog\n" );
-
-			if (yData.bState)
+			if (!m_bIsGamepadUI)
 			{
-				engine->ClientCmd_Unrestricted( "gamemenucommand OpenOptionsDialog\n" );
-				bActiveInput = true;
+				//InputDigitalActionData_t xData = SteamInput()->GetDigitalActionData( m_nControllerHandle, g_DAB_MenuX.handle );
+				InputDigitalActionData_t yData = SteamInput()->GetDigitalActionData( nController, g_DAB_MenuY.handle );
+
+				//if (xData.bState)
+				//	engine->ClientCmd_Unrestricted( "gamemenucommand OpenOptionsDialog\n" );
+
+				if (yData.bState)
+				{
+					g_pEngineClient->ClientCmd_Unrestricted( "gamemenucommand OpenOptionsDialog\n" );
+					bActiveInput = true;
+				}
 			}
 
 		} break;
@@ -915,6 +986,8 @@ bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nControll
 			bActiveInput = true;
 		}
 	}
+
+	//Msg( "Active input on %llu is %s\n", nController, bActiveInput ? "true" : "false" );
 
 	return bActiveInput;
 }
@@ -979,13 +1052,15 @@ void CSource2013SteamInput::PressKeyFromDigitalActionHandle( InputHandle_t nCont
 	if (bSendKey)
 	{
 		if (nHandle.bDown)
-			ivgui()->PostMessage( vgui::input()->GetFocus(), new KeyValues( "KeyCodePressed", "code", nKey ), NULL );
+			vgui::ivgui()->PostMessage( vgui::input()->GetFocus(), new KeyValues( "KeyCodePressed", "code", nKey ), NULL );
+		else
+			vgui::ivgui()->PostMessage( vgui::input()->GetFocus(), new KeyValues( "KeyCodeReleased", "code", nKey ), NULL );
 	}
 }
 #else
-void CSource2013SteamInput::PressKeyFromDigitalActionHandle( InputHandle_t nController, InputDigitalActionHandle_t nHandle, ButtonCode_t nKey, bool &bActiveInput )
+void CSource2013SteamInput::PressKeyFromDigitalActionHandle( InputDigitalActionHandle_t nHandle, ButtonCode_t nKey )
 {
-	InputDigitalActionData_t data = SteamInput()->GetDigitalActionData( nController, nHandle );
+	InputDigitalActionData_t data = SteamInput()->GetDigitalActionData( m_nControllerHandle, nHandle );
 
 	/*if (data.bActive)
 	{
@@ -1068,7 +1143,7 @@ void CSource2013SteamInput::SetRumble( InputHandle_t nController, float fLeftMot
 {
 	if (!IsEnabled() || !si_enable_rumble.GetBool())
 	{
-		inputsystem->SetRumble( fLeftMotor, fRightMotor, userId );
+		g_pInputSystem->SetRumble( fLeftMotor, fRightMotor, userId );
 		return;
 	}
 
@@ -1087,7 +1162,7 @@ void CSource2013SteamInput::StopRumble()
 {
 	if (!IsEnabled())
 	{
-		inputsystem->StopRumble();
+		g_pInputSystem->StopRumble();
 		return;
 	}
 
@@ -1099,12 +1174,12 @@ void CSource2013SteamInput::StopRumble()
 
 void CSource2013SteamInput::SetLEDColor( InputHandle_t nController, byte r, byte g, byte b )
 {
-	SteamInput()->SetLEDColor( nController, r, g, b, k_ESteamControllerLEDFlag_SetColor );
+	SteamInput()->SetLEDColor( nController, r, g, b, k_ESteamInputLEDFlag_SetColor );
 }
 
 void CSource2013SteamInput::ResetLEDColor( InputHandle_t nController )
 {
-	SteamInput()->SetLEDColor( nController, 0, 0, 0, k_ESteamControllerLEDFlag_RestoreUserDefault );
+	SteamInput()->SetLEDColor( nController, 0, 0, 0, k_ESteamInputLEDFlag_RestoreUserDefault );
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -1114,28 +1189,43 @@ int CSource2013SteamInput::FindDigitalActionsForCommand( const char *pszCommand,
 {
 	int iNumHandles = 0;
 
+	if (m_iLastActionSet == AS_MenuControls)
+	{
+		pszCommand += 5;
+		if (!V_strcmp( pszCommand, "up" ))		{ pHandles[0] = g_DAB_MenuUp.handle; return 1; }
+		if (!V_strcmp( pszCommand, "down" ))	{ pHandles[0] = g_DAB_MenuDown.handle; return 1; }
+		if (!V_strcmp( pszCommand, "left" ))	{ pHandles[0] = g_DAB_MenuLeft.handle; return 1; }
+		if (!V_strcmp( pszCommand, "right" ))	{ pHandles[0] = g_DAB_MenuRight.handle; return 1; }
+		if (!V_strcmp( pszCommand, "select" ))	{ pHandles[0] = g_DAB_MenuSelect.handle; return 1; }
+		if (!V_strcmp( pszCommand, "cancel" ))	{ pHandles[0] = g_DAB_MenuCancel.handle; return 1; }
+		if (!V_strcmp( pszCommand, "x" ))		{ pHandles[0] = g_DAB_MenuX.handle; return 1; }
+		if (!V_strcmp( pszCommand, "y" ))		{ pHandles[0] = g_DAB_MenuY.handle; return 1; }
+		if (!V_strcmp( pszCommand, "lb" ))		{ pHandles[0] = g_DAB_MenuLB.handle; return 1; }
+		if (!V_strcmp( pszCommand, "rb" ))		{ pHandles[0] = g_DAB_MenuRB.handle; return 1; }
+	}
+
 	// Special cases
-	if (FStrEq( pszCommand, "duck" ))
+	if (!V_strcmp( pszCommand, "duck" ))
 	{
 		// Add toggle_duck
-		pHandles[iNumHandles] = g_DigitalActionBinds[TOGGLE_DUCK_ACTION_BIND_INDEX].handle;
+		pHandles[iNumHandles] = g_DAB_Toggle_Duck->handle;
 		iNumHandles++;
 	}
-	else if (FStrEq( pszCommand, "zoom" ))
+	else if (!V_strcmp( pszCommand, "zoom" ))
 	{
 		// Add toggle_zoom
-		pHandles[iNumHandles] = g_DigitalActionBinds[TOGGLE_ZOOM_ACTION_BIND_INDEX].handle;
+		pHandles[iNumHandles] = g_DAB_Toggle_Zoom->handle;
 		iNumHandles++;
 	}
 
 	// Figure out which command this is
-	for (int i = 0; i < ARRAYSIZE( g_DigitalActionBinds ); i++)
+	for (int i = 0; i < g_DigitalActionBinds.Count(); i++)
 	{
 		const char *pszBindCommand = g_DigitalActionBinds[i].pszBindCommand;
 		if (pszBindCommand[0] == '+')
 			pszBindCommand++;
 
-		if (FStrEq( pszCommand, pszBindCommand ))
+		if (!V_strcmp( pszCommand, pszBindCommand ))
 		{
 			pHandles[iNumHandles] = g_DigitalActionBinds[i].handle;
 			iNumHandles++;
@@ -1151,7 +1241,7 @@ int CSource2013SteamInput::FindAnalogActionsForCommand( const char *pszCommand, 
 	int iNumHandles = 0;
 
 	// Check pre-set analog action names
-	if (FStrEq( pszCommand, "xlook" ))
+	if (!V_strcmp( pszCommand, "xlook" ))
 	{
 		// Add g_AA_Camera and g_AA_JoystickCamera
 		pHandles[iNumHandles] = g_AA_Camera;
@@ -1159,7 +1249,7 @@ int CSource2013SteamInput::FindAnalogActionsForCommand( const char *pszCommand, 
 		pHandles[iNumHandles] = g_AA_JoystickCamera;
 		iNumHandles++;
 	}
-	else if (FStrEq( pszCommand, "xaccel" ))
+	else if (!V_strcmp( pszCommand, "xaccel" ))
 	{
 		// Add g_AA_Accelerate and g_AA_Move
 		pHandles[iNumHandles] = g_AA_Accelerate;
@@ -1167,7 +1257,7 @@ int CSource2013SteamInput::FindAnalogActionsForCommand( const char *pszCommand, 
 		pHandles[iNumHandles] = g_AA_Move;
 		iNumHandles++;
 	}
-	else if (FStrEq( pszCommand, "xmove" ) )
+	else if (!V_strcmp( pszCommand, "xmove" ) )
 	{
 		// Add g_AA_Accelerate and g_AA_Move
 		pHandles[iNumHandles] = g_AA_Accelerate;
@@ -1175,17 +1265,17 @@ int CSource2013SteamInput::FindAnalogActionsForCommand( const char *pszCommand, 
 		pHandles[iNumHandles] = g_AA_Move;
 		iNumHandles++;
 	}
-	else if (FStrEq( pszCommand, "xsteer" ))
+	else if (!V_strcmp( pszCommand, "xsteer" ))
 	{
 		pHandles[iNumHandles] = g_AA_Steer;
 		iNumHandles++;
 	}
-	else if (FStrEq( pszCommand, "xbrake" ))
+	else if (!V_strcmp( pszCommand, "xbrake" ))
 	{
 		pHandles[iNumHandles] = g_AA_Brake;
 		iNumHandles++;
 	}
-	else if (FStrEq( pszCommand, "xmouse" ))
+	else if (!V_strcmp( pszCommand, "xmouse" ))
 	{
 		pHandles[iNumHandles] = g_AA_Mouse;
 		iNumHandles++;
@@ -1210,20 +1300,10 @@ void CSource2013SteamInput::GetInputActionOriginsForCommand( const char *pszComm
 	}
 	else
 	{
-		C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
-		if( pPlayer )
+		switch (m_iLastActionSet)
 		{
-			if ( !engine->IsPaused() && !engine->IsLevelMainMenuBackground() )
-			{
-				if (pPlayer->GetVehicle())
-				{
-					actionSet = g_AS_VehicleControls;
-				}
-				else
-				{
-					actionSet = g_AS_GameControls;
-				}
-			}
+			case AS_GameControls:		actionSet = g_AS_GameControls; break;
+			case AS_VehicleControls:	actionSet = g_AS_VehicleControls; break;
 		}
 	}
 
@@ -1267,7 +1347,7 @@ void CSource2013SteamInput::GetInputActionOriginsForCommand( const char *pszComm
 	}
 }
 
-const char *CSource2013SteamInput::GetGlyphForCommand( const char *pszCommand, bool bSVG )
+void CSource2013SteamInput::GetGlyphPNGsForCommand( CUtlVector<const char *> &szImgList, const char *pszCommand, int &iSize, int iStyle )
 {
 	if (pszCommand[0] == '+')
 		pszCommand++;
@@ -1275,48 +1355,50 @@ const char *CSource2013SteamInput::GetGlyphForCommand( const char *pszCommand, b
 	CUtlVector<EInputActionOrigin> actionOrigins;
 	GetInputActionOriginsForCommand( pszCommand, actionOrigins );
 
-	if (bSVG)
+	ESteamInputGlyphSize glyphSize;
+	if (iSize <= 32)
 	{
-		return SteamInput()->GetGlyphSVGForActionOrigin( actionOrigins[0], 0 );
+		glyphSize = k_ESteamInputGlyphSize_Small;
+		iSize = 32;
+	}
+	else if (iSize <= 128)
+	{
+		glyphSize = k_ESteamInputGlyphSize_Medium;
+		iSize = 128;
 	}
 	else
 	{
-		// TODO: Multiple sizes?
-		return SteamInput()->GetGlyphPNGForActionOrigin( actionOrigins[0], k_ESteamInputGlyphSize_Medium, 0 );
+		glyphSize = k_ESteamInputGlyphSize_Large;
+		iSize = 256;
 	}
-}
 
-void CSource2013SteamInput::GetGlyphFontForCommand( const char *pszCommand, char *szChars, int szCharsSize, vgui::HFont &hFont, vgui::IScheme *pScheme )
-{
-	if (pszCommand[0] == '+')
-		pszCommand++;
-
-	CUtlVector<EInputActionOrigin> actionOrigins;
-	GetInputActionOriginsForCommand( pszCommand, actionOrigins );
-
-	for (int i = 0; i < actionOrigins.Count(); i++)
+	FOR_EACH_VEC( actionOrigins, i )
 	{
 		if (si_force_glyph_controller.GetInt() != -1)
 		{
 			actionOrigins[i] = SteamInput()->TranslateActionOrigin( (ESteamInputType)si_force_glyph_controller.GetInt(), actionOrigins[i] );
 		}
 
-		char cChar = LookupGlyphCharForActionOrigin( actionOrigins[i], hFont, pScheme );
-		if (cChar == 0)
+		szImgList.AddToTail( SteamInput()->GetGlyphPNGForActionOrigin( actionOrigins[i], glyphSize, (ESteamInputGlyphStyle)iStyle ) );
+	}
+}
+
+void CSource2013SteamInput::GetGlyphSVGsForCommand( CUtlVector<const char *> &szImgList, const char *pszCommand )
+{
+	if (pszCommand[0] == '+')
+		pszCommand++;
+
+	CUtlVector<EInputActionOrigin> actionOrigins;
+	GetInputActionOriginsForCommand( pszCommand, actionOrigins );
+
+	FOR_EACH_VEC( actionOrigins, i )
+	{
+		if (si_force_glyph_controller.GetInt() != -1)
 		{
-			// Translate to default (k_ESteamInputType_Unknown) and try again
-			actionOrigins[i] = SteamInput()->TranslateActionOrigin( (ESteamInputType)si_default_glyph_controller.GetInt(), actionOrigins[i] );
-			cChar = LookupGlyphCharForActionOrigin( actionOrigins[i], hFont, pScheme );
+			actionOrigins[i] = SteamInput()->TranslateActionOrigin( (ESteamInputType)si_force_glyph_controller.GetInt(), actionOrigins[i] );
 		}
 
-		if (cChar != 0)
-		{
-			int len = strlen(szChars);
-			szChars[len] = cChar;
-			
-			if (len+1 >= szCharsSize)
-				break;
-		}
+		szImgList.AddToTail( SteamInput()->GetGlyphSVGForActionOrigin( actionOrigins[i], 0 ) );
 	}
 }
 
@@ -1334,678 +1416,153 @@ void CSource2013SteamInput::GetButtonStringsForCommand( const char *pszCommand, 
 	}
 }
 
-char CSource2013SteamInput::LookupGlyphCharForActionOrigin( EInputActionOrigin eAction, vgui::HFont &hFont, vgui::IScheme *pScheme )
-{
-	// Steam Deck
-	if (eAction >= k_EInputActionOrigin_SteamDeck_A && eAction <= k_EInputActionOrigin_SteamDeck_Reserved20)
-	{
-		hFont = pScheme->GetFont( "SteamButtons_SD", true );
-		switch (eAction)
-		{
-			case k_EInputActionOrigin_SteamDeck_A:
-				return 'A';
-			case k_EInputActionOrigin_SteamDeck_B:
-				return 'B';
-			case k_EInputActionOrigin_SteamDeck_X:
-				return 'X';
-			case k_EInputActionOrigin_SteamDeck_Y:
-				return 'Y';
-
-			case k_EInputActionOrigin_SteamDeck_L1:
-				return 'K';
-			case k_EInputActionOrigin_SteamDeck_L2:
-			case k_EInputActionOrigin_SteamDeck_L2_SoftPull:
-				return 'L';
-			case k_EInputActionOrigin_SteamDeck_L4:
-				return 'M';
-			case k_EInputActionOrigin_SteamDeck_L5:
-				return 'N';
-
-			case k_EInputActionOrigin_SteamDeck_R1:
-				return 'k';
-			case k_EInputActionOrigin_SteamDeck_R2:
-			case k_EInputActionOrigin_SteamDeck_R2_SoftPull:
-				return 'l';
-			case k_EInputActionOrigin_SteamDeck_R4:
-				return 'm';
-			case k_EInputActionOrigin_SteamDeck_R5:
-				return 'n';
-
-			case k_EInputActionOrigin_SteamDeck_LeftStick_Move:
-			case k_EInputActionOrigin_SteamDeck_LeftStick_Touch:
-				return ',';
-			case k_EInputActionOrigin_SteamDeck_LeftStick_DPadNorth:
-				return ';';
-			case k_EInputActionOrigin_SteamDeck_LeftStick_DPadSouth:
-				return ':';
-			case k_EInputActionOrigin_SteamDeck_LeftStick_DPadWest:
-				return '\\';
-			case k_EInputActionOrigin_SteamDeck_LeftStick_DPadEast:
-				return '|';
-			case k_EInputActionOrigin_SteamDeck_L3:
-				return '<';
-
-			case k_EInputActionOrigin_SteamDeck_RightStick_Move:
-			case k_EInputActionOrigin_SteamDeck_RightStick_Touch:
-				return '.';
-			case k_EInputActionOrigin_SteamDeck_RightStick_DPadNorth:
-				return '\'';
-			case k_EInputActionOrigin_SteamDeck_RightStick_DPadSouth:
-				return '\"';
-			case k_EInputActionOrigin_SteamDeck_RightStick_DPadWest:
-				return '_';
-			case k_EInputActionOrigin_SteamDeck_RightStick_DPadEast:
-				return '?';
-			case k_EInputActionOrigin_SteamDeck_R3:
-				return '>';
-
-			case k_EInputActionOrigin_SteamDeck_LeftPad_Touch:
-				return '(';
-			case k_EInputActionOrigin_SteamDeck_LeftPad_Swipe:
-				return '[';
-			case k_EInputActionOrigin_SteamDeck_LeftPad_Click:
-				return '{';
-			case k_EInputActionOrigin_SteamDeck_LeftPad_DPadNorth:
-				return 'O';
-			case k_EInputActionOrigin_SteamDeck_LeftPad_DPadSouth:
-				return 'P';
-			case k_EInputActionOrigin_SteamDeck_LeftPad_DPadWest:
-				return 'Q';
-			case k_EInputActionOrigin_SteamDeck_LeftPad_DPadEast:
-				return 'R';
-
-			case k_EInputActionOrigin_SteamDeck_RightPad_Touch:
-				return ')';
-			case k_EInputActionOrigin_SteamDeck_RightPad_Swipe:
-				return ']';
-			case k_EInputActionOrigin_SteamDeck_RightPad_Click:
-				return '}';
-			case k_EInputActionOrigin_SteamDeck_RightPad_DPadNorth:
-				return 'o';
-			case k_EInputActionOrigin_SteamDeck_RightPad_DPadSouth:
-				return 'p';
-			case k_EInputActionOrigin_SteamDeck_RightPad_DPadWest:
-				return 'q';
-			case k_EInputActionOrigin_SteamDeck_RightPad_DPadEast:
-				return 'r';
-
-			case k_EInputActionOrigin_SteamDeck_DPad_North:
-				return 'F';
-			case k_EInputActionOrigin_SteamDeck_DPad_South:
-				return 'G';
-			case k_EInputActionOrigin_SteamDeck_DPad_West:
-				return 'D';
-			case k_EInputActionOrigin_SteamDeck_DPad_East:
-				return 'E';
-
-			case k_EInputActionOrigin_SteamDeck_Gyro_Move:
-				return 'c';
-			case k_EInputActionOrigin_SteamDeck_Gyro_Pitch:
-				return 'f';
-			case k_EInputActionOrigin_SteamDeck_Gyro_Yaw:
-				return 'e';
-			case k_EInputActionOrigin_SteamDeck_Gyro_Roll:
-				return 'f';
-
-			case k_EInputActionOrigin_SteamDeck_Menu:
-				return 'T';
-			case k_EInputActionOrigin_SteamDeck_View:
-				return 'S';
-		}
-	}
-	// Xbox 360 Controller
-	else if (eAction >= k_EInputActionOrigin_XBox360_A && eAction <= k_EInputActionOrigin_XBox360_Reserved10)
-	{
-		hFont = pScheme->GetFont( "SteamButtons_Xbox", true );
-		switch (eAction)
-		{
-			case k_EInputActionOrigin_XBox360_A:
-				return 'A';
-			case k_EInputActionOrigin_XBox360_B:
-				return 'B';
-			case k_EInputActionOrigin_XBox360_X:
-				return 'X';
-			case k_EInputActionOrigin_XBox360_Y:
-				return 'Y';
-
-			case k_EInputActionOrigin_XBox360_LeftBumper:
-				return 'K';
-			case k_EInputActionOrigin_XBox360_RightBumper:
-				return 'k';
-
-			case k_EInputActionOrigin_XBox360_Start:
-				return 'W';
-			case k_EInputActionOrigin_XBox360_Back:
-				return 'V';
-
-			case k_EInputActionOrigin_XBox360_LeftTrigger_Pull:
-			case k_EInputActionOrigin_XBox360_LeftTrigger_Click:
-				return 'L';
-			case k_EInputActionOrigin_XBox360_RightTrigger_Pull:
-			case k_EInputActionOrigin_XBox360_RightTrigger_Click:
-				return 'l';
-
-			case k_EInputActionOrigin_XBox360_LeftStick_Move:
-				return ',';
-			case k_EInputActionOrigin_XBox360_LeftStick_Click:
-				return '<';
-			case k_EInputActionOrigin_XBox360_LeftStick_DPadNorth:
-				return ';';
-			case k_EInputActionOrigin_XBox360_LeftStick_DPadSouth:
-				return ':';
-			case k_EInputActionOrigin_XBox360_LeftStick_DPadWest:
-				return '\\';
-			case k_EInputActionOrigin_XBox360_LeftStick_DPadEast:
-				return '|';
-
-			case k_EInputActionOrigin_XBox360_RightStick_Move:
-				return '.';
-			case k_EInputActionOrigin_XBox360_RightStick_Click:
-				return '>';
-			case k_EInputActionOrigin_XBox360_RightStick_DPadNorth:
-				return '\'';
-			case k_EInputActionOrigin_XBox360_RightStick_DPadSouth:
-				return '\"';
-			case k_EInputActionOrigin_XBox360_RightStick_DPadWest:
-				return '_';
-			case k_EInputActionOrigin_XBox360_RightStick_DPadEast:
-				return '?';
-
-			case k_EInputActionOrigin_XBox360_DPad_North:
-				return 'F';
-			case k_EInputActionOrigin_XBox360_DPad_South:
-				return 'G';
-			case k_EInputActionOrigin_XBox360_DPad_West:
-				return 'D';
-			case k_EInputActionOrigin_XBox360_DPad_East:
-				return 'E';
-		}
-	}
-	// Xbox One Controller
-	else if (eAction >= k_EInputActionOrigin_XBoxOne_A && eAction <= k_EInputActionOrigin_XBoxOne_Reserved10)
-	{
-		hFont = pScheme->GetFont( "SteamButtons_Xbox", true );
-		switch (eAction)
-		{
-			case k_EInputActionOrigin_XBoxOne_A:
-				return 'A';
-			case k_EInputActionOrigin_XBoxOne_B:
-				return 'B';
-			case k_EInputActionOrigin_XBoxOne_X:
-				return 'X';
-			case k_EInputActionOrigin_XBoxOne_Y:
-				return 'Y';
-
-			case k_EInputActionOrigin_XBoxOne_LeftBumper:
-				return 'K';
-			case k_EInputActionOrigin_XBoxOne_RightBumper:
-				return 'k';
-
-			case k_EInputActionOrigin_XBoxOne_Menu:
-				return 'w';
-			case k_EInputActionOrigin_XBoxOne_View:
-				return 'v';
-
-			case k_EInputActionOrigin_XBoxOne_LeftTrigger_Pull:
-			case k_EInputActionOrigin_XBoxOne_LeftTrigger_Click:
-				return 'L';
-			case k_EInputActionOrigin_XBoxOne_RightTrigger_Pull:
-			case k_EInputActionOrigin_XBoxOne_RightTrigger_Click:
-				return 'l';
-
-			case k_EInputActionOrigin_XBoxOne_LeftStick_Move:
-				return ',';
-			case k_EInputActionOrigin_XBoxOne_LeftStick_Click:
-				return '<';
-			case k_EInputActionOrigin_XBoxOne_LeftStick_DPadNorth:
-				return ';';
-			case k_EInputActionOrigin_XBoxOne_LeftStick_DPadSouth:
-				return ':';
-			case k_EInputActionOrigin_XBoxOne_LeftStick_DPadWest:
-				return '\\';
-			case k_EInputActionOrigin_XBoxOne_LeftStick_DPadEast:
-				return '|';
-
-			case k_EInputActionOrigin_XBoxOne_RightStick_Move:
-				return '.';
-			case k_EInputActionOrigin_XBoxOne_RightStick_Click:
-				return '>';
-			case k_EInputActionOrigin_XBoxOne_RightStick_DPadNorth:
-				return '\'';
-			case k_EInputActionOrigin_XBoxOne_RightStick_DPadSouth:
-				return '\"';
-			case k_EInputActionOrigin_XBoxOne_RightStick_DPadWest:
-				return '_';
-			case k_EInputActionOrigin_XBoxOne_RightStick_DPadEast:
-				return '?';
-
-			case k_EInputActionOrigin_XBoxOne_DPad_North:
-				return 'F';
-			case k_EInputActionOrigin_XBoxOne_DPad_South:
-				return 'G';
-			case k_EInputActionOrigin_XBoxOne_DPad_West:
-				return 'D';
-			case k_EInputActionOrigin_XBoxOne_DPad_East:
-				return 'E';
-			case k_EInputActionOrigin_XBoxOne_DPad_Move:
-				return 'I';
-
-			case k_EInputActionOrigin_XBoxOne_LeftGrip_Lower:
-				return 'N';
-			case k_EInputActionOrigin_XBoxOne_LeftGrip_Upper:
-				return 'M';
-			case k_EInputActionOrigin_XBoxOne_RightGrip_Lower:
-				return 'n';
-			case k_EInputActionOrigin_XBoxOne_RightGrip_Upper:
-				return 'm';
-
-			case k_EInputActionOrigin_XBoxOne_Share:
-				return 'u';
-		}
-	}
-	// Switch Controller
-	else if (eAction >= k_EInputActionOrigin_Switch_A && eAction <= k_EInputActionOrigin_Switch_Reserved20)
-	{
-		bool bIsPro = (SteamInput()->GetInputTypeForHandle( m_nControllerHandle ) == k_ESteamInputType_SwitchProController);
-		hFont = pScheme->GetFont( "SteamButtons_Switch", true );
-		switch (eAction)
-		{
-			case k_EInputActionOrigin_Switch_A:
-				return 'A';
-			case k_EInputActionOrigin_Switch_B:
-				return 'B';
-			case k_EInputActionOrigin_Switch_X:
-				return 'X';
-			case k_EInputActionOrigin_Switch_Y:
-				return 'Y';
-
-			case k_EInputActionOrigin_Switch_LeftBumper:
-				return 'K';
-			case k_EInputActionOrigin_Switch_RightBumper:
-				return 'k';
-
-			case k_EInputActionOrigin_Switch_Plus:
-				return '+';
-			case k_EInputActionOrigin_Switch_Minus:
-				return '-';
-			case k_EInputActionOrigin_Switch_Capture:
-				return 'w';
-
-			case k_EInputActionOrigin_Switch_LeftTrigger_Pull:
-			case k_EInputActionOrigin_Switch_LeftTrigger_Click:
-				return 'L';
-			case k_EInputActionOrigin_Switch_RightTrigger_Pull:
-			case k_EInputActionOrigin_Switch_RightTrigger_Click:
-				return 'l';
-
-			case k_EInputActionOrigin_Switch_LeftStick_Move:
-				return ',';
-			case k_EInputActionOrigin_Switch_LeftStick_Click:
-				return '<';
-			case k_EInputActionOrigin_Switch_LeftStick_DPadNorth:
-				return ';';
-			case k_EInputActionOrigin_Switch_LeftStick_DPadSouth:
-				return ':';
-			case k_EInputActionOrigin_Switch_LeftStick_DPadWest:
-				return '\\';
-			case k_EInputActionOrigin_Switch_LeftStick_DPadEast:
-				return '|';
-
-			case k_EInputActionOrigin_Switch_RightStick_Move:
-				return '.';
-			case k_EInputActionOrigin_Switch_RightStick_Click:
-				return '>';
-			case k_EInputActionOrigin_Switch_RightStick_DPadNorth:
-				return '\'';
-			case k_EInputActionOrigin_Switch_RightStick_DPadSouth:
-				return '\"';
-			case k_EInputActionOrigin_Switch_RightStick_DPadWest:
-				return '_';
-			case k_EInputActionOrigin_Switch_RightStick_DPadEast:
-				return '?';
-
-			// Pro Controller and Joy-Con use different icons
-			case k_EInputActionOrigin_Switch_DPad_Move:
-				return bIsPro ? 'I' : 'o';
-			case k_EInputActionOrigin_Switch_DPad_North:
-				return bIsPro ? 'F' : 'r';
-			case k_EInputActionOrigin_Switch_DPad_South:
-				return bIsPro ? 'G' : 's';
-			case k_EInputActionOrigin_Switch_DPad_West:
-				return bIsPro ? 'D' : 'p';
-			case k_EInputActionOrigin_Switch_DPad_East:
-				return bIsPro ? 'E' : 'q';
-
-			case k_EInputActionOrigin_Switch_RightGyro_Move:
-			case k_EInputActionOrigin_Switch_LeftGyro_Move:
-			case k_EInputActionOrigin_Switch_ProGyro_Move:
-				return 'c';
-			case k_EInputActionOrigin_Switch_RightGyro_Pitch:
-			case k_EInputActionOrigin_Switch_LeftGyro_Pitch:
-			case k_EInputActionOrigin_Switch_ProGyro_Pitch:
-				return 'f';
-			case k_EInputActionOrigin_Switch_RightGyro_Yaw:
-			case k_EInputActionOrigin_Switch_LeftGyro_Yaw:
-			case k_EInputActionOrigin_Switch_ProGyro_Yaw:
-				return 'e';
-			case k_EInputActionOrigin_Switch_ProGyro_Roll:
-			case k_EInputActionOrigin_Switch_RightGyro_Roll:
-			case k_EInputActionOrigin_Switch_LeftGyro_Roll:
-				return 'f';
-
-			case k_EInputActionOrigin_Switch_LeftGrip_Lower:
-			case k_EInputActionOrigin_Switch_RightGrip_Upper:
-				return 'm';
-			case k_EInputActionOrigin_Switch_RightGrip_Lower:
-			case k_EInputActionOrigin_Switch_LeftGrip_Upper:
-				return 'M';
-		}
-	}
-	// PS4 Controller
-	else if (eAction >= k_EInputActionOrigin_PS4_X && eAction <= k_EInputActionOrigin_PS4_Reserved10)
-	{
-		hFont = pScheme->GetFont( "SteamButtons_PS", true );
-		switch (eAction)
-		{
-			case k_EInputActionOrigin_PS4_X:
-				return 'A';
-			case k_EInputActionOrigin_PS4_Circle:
-				return 'B';
-			case k_EInputActionOrigin_PS4_Triangle:
-				return 'Y';
-			case k_EInputActionOrigin_PS4_Square:
-				return 'X';
-
-			case k_EInputActionOrigin_PS4_LeftBumper:
-				return 'K';
-			case k_EInputActionOrigin_PS4_RightBumper:
-				return 'k';
-
-			case k_EInputActionOrigin_PS4_Options:
-				return 'w';
-			case k_EInputActionOrigin_PS4_Share:
-				return 'z';
-
-			case k_EInputActionOrigin_PS4_LeftPad_Touch:
-				return '(';
-			case k_EInputActionOrigin_PS4_LeftPad_Swipe:
-				return '[';
-			case k_EInputActionOrigin_PS4_LeftPad_Click:
-				return '{';
-			case k_EInputActionOrigin_PS4_LeftPad_DPadNorth:
-				return 'O';
-			case k_EInputActionOrigin_PS4_LeftPad_DPadSouth:
-				return 'P';
-			case k_EInputActionOrigin_PS4_LeftPad_DPadWest:
-				return 'Q';
-			case k_EInputActionOrigin_PS4_LeftPad_DPadEast:
-				return 'R';
-
-			case k_EInputActionOrigin_PS4_RightPad_Touch:
-				return ')';
-			case k_EInputActionOrigin_PS4_RightPad_Swipe:
-				return ']';
-			case k_EInputActionOrigin_PS4_RightPad_Click:
-				return '}';
-			case k_EInputActionOrigin_PS4_RightPad_DPadNorth:
-				return 'o';
-			case k_EInputActionOrigin_PS4_RightPad_DPadSouth:
-				return 'p';
-			case k_EInputActionOrigin_PS4_RightPad_DPadWest:
-				return 'q';
-			case k_EInputActionOrigin_PS4_RightPad_DPadEast:
-				return 'r';
-
-			case k_EInputActionOrigin_PS4_CenterPad_Touch:
-			case k_EInputActionOrigin_PS4_CenterPad_Swipe:
-			case k_EInputActionOrigin_PS4_CenterPad_Click:
-			case k_EInputActionOrigin_PS4_CenterPad_DPadNorth:
-			case k_EInputActionOrigin_PS4_CenterPad_DPadSouth:
-			case k_EInputActionOrigin_PS4_CenterPad_DPadWest:
-			case k_EInputActionOrigin_PS4_CenterPad_DPadEast:
-				return '^';
-
-			case k_EInputActionOrigin_PS4_LeftTrigger_Pull:
-			case k_EInputActionOrigin_PS4_LeftTrigger_Click:
-				return 'L';
-			case k_EInputActionOrigin_PS4_RightTrigger_Pull:
-			case k_EInputActionOrigin_PS4_RightTrigger_Click:
-				return 'l';
-
-			case k_EInputActionOrigin_PS4_LeftStick_Move:
-				return ',';
-			case k_EInputActionOrigin_PS4_LeftStick_Click:
-				return '<';
-			case k_EInputActionOrigin_PS4_LeftStick_DPadNorth:
-				return ';';
-			case k_EInputActionOrigin_PS4_LeftStick_DPadSouth:
-				return ':';
-			case k_EInputActionOrigin_PS4_LeftStick_DPadWest:
-				return '\\';
-			case k_EInputActionOrigin_PS4_LeftStick_DPadEast:
-				return '|';
-
-			case k_EInputActionOrigin_PS4_RightStick_Move:
-				return '.';
-			case k_EInputActionOrigin_PS4_RightStick_Click:
-				return '>';
-			case k_EInputActionOrigin_PS4_RightStick_DPadNorth:
-				return '\'';
-			case k_EInputActionOrigin_PS4_RightStick_DPadSouth:
-				return '\"';
-			case k_EInputActionOrigin_PS4_RightStick_DPadWest:
-				return '_';
-			case k_EInputActionOrigin_PS4_RightStick_DPadEast:
-				return '?';
-
-			case k_EInputActionOrigin_PS4_DPad_North:
-				return 'F';
-			case k_EInputActionOrigin_PS4_DPad_South:
-				return 'G';
-			case k_EInputActionOrigin_PS4_DPad_West:
-				return 'D';
-			case k_EInputActionOrigin_PS4_DPad_East:
-				return 'E';
-			case k_EInputActionOrigin_PS4_DPad_Move:
-				return 'C';
-		}
-	}
-	// PS5 Controller
-	else if (eAction >= k_EInputActionOrigin_PS5_X && eAction <= k_EInputActionOrigin_PS5_Reserved20)
-	{
-		hFont = pScheme->GetFont( "SteamButtons_PS", true );
-		switch (eAction)
-		{
-			case k_EInputActionOrigin_PS5_X:
-				return 'A';
-			case k_EInputActionOrigin_PS5_Circle:
-				return 'B';
-			case k_EInputActionOrigin_PS5_Triangle:
-				return 'Y';
-			case k_EInputActionOrigin_PS5_Square:
-				return 'X';
-
-			case k_EInputActionOrigin_PS5_LeftBumper:
-				return 'M';
-			case k_EInputActionOrigin_PS5_RightBumper:
-				return 'm';
-
-			case k_EInputActionOrigin_PS5_Option:
-				return 'W';
-			case k_EInputActionOrigin_PS5_Create:
-				return 'Z';
-
-			case k_EInputActionOrigin_PS5_LeftPad_Touch:
-			case k_EInputActionOrigin_PS5_LeftPad_Swipe:
-				return 'g';
-			case k_EInputActionOrigin_PS5_LeftPad_Click:
-				return 'i';
-			case k_EInputActionOrigin_PS5_LeftPad_DPadNorth:
-				return 'S';
-			case k_EInputActionOrigin_PS5_LeftPad_DPadSouth:
-				return 'T';
-			case k_EInputActionOrigin_PS5_LeftPad_DPadWest:
-				return 'U';
-			case k_EInputActionOrigin_PS5_LeftPad_DPadEast:
-				return 'V';
-
-			case k_EInputActionOrigin_PS5_RightPad_Touch:
-			case k_EInputActionOrigin_PS5_RightPad_Swipe:
-				return 'h';
-			case k_EInputActionOrigin_PS5_RightPad_Click:
-				return 'j';
-			case k_EInputActionOrigin_PS5_RightPad_DPadNorth:
-				return 's';
-			case k_EInputActionOrigin_PS5_RightPad_DPadSouth:
-				return 't';
-			case k_EInputActionOrigin_PS5_RightPad_DPadWest:
-				return 'u';
-			case k_EInputActionOrigin_PS5_RightPad_DPadEast:
-				return 'v';
-
-			case k_EInputActionOrigin_PS5_CenterPad_Touch:
-			case k_EInputActionOrigin_PS5_CenterPad_Swipe:
-			case k_EInputActionOrigin_PS5_CenterPad_Click:
-			case k_EInputActionOrigin_PS5_CenterPad_DPadNorth:
-			case k_EInputActionOrigin_PS5_CenterPad_DPadSouth:
-			case k_EInputActionOrigin_PS5_CenterPad_DPadWest:
-			case k_EInputActionOrigin_PS5_CenterPad_DPadEast:
-				return '`';
-
-			case k_EInputActionOrigin_PS5_LeftTrigger_Pull:
-			case k_EInputActionOrigin_PS5_LeftTrigger_Click:
-				return 'N';
-			case k_EInputActionOrigin_PS5_RightTrigger_Pull:
-			case k_EInputActionOrigin_PS5_RightTrigger_Click:
-				return 'n';
-
-			case k_EInputActionOrigin_PS5_LeftStick_Move:
-				return ',';
-			case k_EInputActionOrigin_PS5_LeftStick_Click:
-				return '<';
-			case k_EInputActionOrigin_PS5_LeftStick_DPadNorth:
-				return ';';
-			case k_EInputActionOrigin_PS5_LeftStick_DPadSouth:
-				return ':';
-			case k_EInputActionOrigin_PS5_LeftStick_DPadWest:
-				return '\\';
-			case k_EInputActionOrigin_PS5_LeftStick_DPadEast:
-				return '|';
-
-			case k_EInputActionOrigin_PS5_RightStick_Move:
-				return '.';
-			case k_EInputActionOrigin_PS5_RightStick_Click:
-				return '>';
-			case k_EInputActionOrigin_PS5_RightStick_DPadNorth:
-				return '\'';
-			case k_EInputActionOrigin_PS5_RightStick_DPadSouth:
-				return '\"';
-			case k_EInputActionOrigin_PS5_RightStick_DPadWest:
-				return '_';
-			case k_EInputActionOrigin_PS5_RightStick_DPadEast:
-				return '?';
-
-			case k_EInputActionOrigin_PS5_DPad_North:
-				return 'F';
-			case k_EInputActionOrigin_PS5_DPad_South:
-				return 'G';
-			case k_EInputActionOrigin_PS5_DPad_West:
-				return 'D';
-			case k_EInputActionOrigin_PS5_DPad_East:
-				return 'E';
-			case k_EInputActionOrigin_PS5_DPad_Move:
-				return 'C';
-				
-			case k_EInputActionOrigin_PS5_Gyro_Move:
-				return 'c';
-			case k_EInputActionOrigin_PS5_Gyro_Pitch:
-				return 'f';
-			case k_EInputActionOrigin_PS5_Gyro_Yaw:
-				return 'e';
-			case k_EInputActionOrigin_PS5_Gyro_Roll:
-				return 'f';
-		}
-	}
-
-	return 0;
-}
-
 inline const char *CSource2013SteamInput::LookupDescriptionForActionOrigin( EInputActionOrigin eAction )
 {
 	return SteamInput()->GetStringForActionOrigin( eAction );
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Steam Input variation of UTIL_ReplaceKeyBindings which replaces key
-//			bindings with corresponding glyphs.
-//-----------------------------------------------------------------------------
-void UTIL_ReplaceKeyBindingsWithGlyphs( const wchar_t *inbuf, int inbufsizebytes, OUT_Z_BYTECAP(outbufsizebytes) wchar_t *outbuf, int outbufsizebytes, vgui::HFont &hFont, vgui::IScheme *pScheme )
-{
-	Assert( outbufsizebytes >= sizeof(outbuf[0]) );
-	// copy to a new buf if there are vars
-	outbuf[0]=0;
 
-	if ( !inbuf || !inbuf[0] )
+#ifdef PNG_LIBPNG_VER
+void ReadPNG_CUtlBuffer( png_structp png_ptr, png_bytep data, size_t length )
+{
+	if ( !png_ptr )
 		return;
 
-	int pos = 0;
-	const wchar_t *inbufend = NULL;
-	if ( inbufsizebytes > 0 )
+	CUtlBuffer *pBuffer = (CUtlBuffer *)png_get_io_ptr( png_ptr );
+
+	if ( (size_t)pBuffer->TellMaxPut() < ( (size_t)pBuffer->TellGet() + length ) ) // CUtlBuffer::CheckGet()
 	{
-		inbufend = inbuf + ( inbufsizebytes / 2 );
+		//png_error( png_ptr, "read error" );
+		png_longjmp( png_ptr, 1 );
 	}
 
-	while( inbuf != inbufend && *inbuf != 0 )
-	{
-		// check for variables
-		if ( *inbuf == '%' )
-		{
-			++inbuf;
-
-			const wchar_t *end = wcschr( inbuf, '%' );
-			if ( end && ( end != inbuf ) ) // make sure we handle %% in the string, which should be treated in the output as %
-			{
-				wchar_t token[64];
-				wcsncpy( token, inbuf, end - inbuf );
-				token[end - inbuf] = 0;
-
-				inbuf += end - inbuf;
-
-				// lookup key names
-				char binding[64];
-				g_pVGuiLocalize->ConvertUnicodeToANSI( token, binding, sizeof(binding) );
-
-				char key[16];
-				g_pSteamInput->GetGlyphFontForCommand( binding, key, sizeof( key ), hFont, pScheme );
-
-				g_pVGuiLocalize->ConvertANSIToUnicode( key, token, sizeof(token) );
-
-				outbuf[pos] = '\0';
-				wcscat( outbuf, token );
-				pos += wcslen(token);
-			}
-			else
-			{
-				outbuf[pos] = *inbuf;
-				++pos;
-			}
-		}
-		else
-		{
-			outbuf[pos] = *inbuf;
-			++pos;
-		}
-
-		++inbuf;
-	}
-
-	outbuf[pos] = '\0';
+	pBuffer->Get( data, length );
 }
+#endif
+
+bool CSource2013SteamInput::GetPNGBufferFromFile( const char *filename, CUtlMemory< byte > &buffer )
+{
+#ifdef PNG_LIBPNG_VER
+	// Read the whole image to memory
+	CUtlBuffer fileBuffer;
+
+	if ( !g_pFullFileSystem->ReadFile( filename, NULL, fileBuffer ) )
+	{
+		Warning( "Failed to read PNG file (%s)\n", filename );
+		return false;
+	}
+
+	if ( png_sig_cmp( (png_const_bytep)fileBuffer.Base(), 0, 8 ) )
+	{
+		Warning( "Bad PNG signature\n" );
+		return false;
+	}
+
+	png_bytepp row_pointers = NULL;
+
+	png_structp png_ptr = png_create_read_struct( png_get_libpng_ver(NULL), NULL, NULL, NULL );
+	png_infop info_ptr = png_create_info_struct( png_ptr );
+
+	if ( !info_ptr || !png_ptr )
+	{
+		Warning( "Out of memory reading PNG\n" );
+		png_destroy_read_struct( &png_ptr, &info_ptr, NULL );
+		return false;
+	}
+
+	if ( setjmp( png_jmpbuf( png_ptr ) ) )
+	{
+		Warning( "Failed to read PNG\n" );
+		png_destroy_read_struct( &png_ptr, &info_ptr, NULL );
+		if ( row_pointers )
+			free( row_pointers );
+		return false;
+	}
+
+	png_set_read_fn( png_ptr, &fileBuffer, ReadPNG_CUtlBuffer );
+	png_read_info( png_ptr, info_ptr );
+
+	png_uint_32 image_width, image_height;
+	int bit_depth, color_type;
+
+	png_get_IHDR( png_ptr, info_ptr, &image_width, &image_height, &bit_depth, &color_type, NULL, NULL, NULL );
+
+	// expand palette images to RGB, low-bit-depth grayscale images to 8 bits,
+	// transparency chunks to full alpha channel; strip 16-bit-per-sample
+	// images to 8 bits per sample; and convert grayscale to RGB[A]
+
+	if ( color_type == PNG_COLOR_TYPE_PALETTE )
+		png_set_expand(png_ptr);
+	if ( color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8 )
+		png_set_expand(png_ptr);
+	if ( png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS) )
+		png_set_expand(png_ptr);
+#ifdef PNG_READ_16_TO_8_SUPPORTED
+	if ( bit_depth == 16 )
+	#ifdef PNG_READ_SCALE_16_TO_8_SUPPORTED
+		png_set_scale_16(png_ptr);
+	#else
+		png_set_strip_16(png_ptr);
+	#endif
+#endif
+	if ( color_type == PNG_COLOR_TYPE_GRAY ||
+		color_type == PNG_COLOR_TYPE_GRAY_ALPHA )
+		png_set_gray_to_rgb(png_ptr);
+
+	// Expand RGB to RGBA
+	if ( color_type == PNG_COLOR_TYPE_RGB )
+		png_set_filler( png_ptr, 0xffff, PNG_FILLER_AFTER );
+
+	png_read_update_info( png_ptr, info_ptr );
+
+	png_uint_32 rowbytes = png_get_rowbytes( png_ptr, info_ptr );
+	int channels = (int)png_get_channels( png_ptr, info_ptr );
+
+	if ( channels != 4 )
+	{
+		Warning( "PNG is not RGBA\n" );
+		png_destroy_read_struct( &png_ptr, &info_ptr, NULL );
+		return false;
+	}
+
+	if ( image_height > ((size_t)(-1)) / rowbytes )
+	{
+		Warning( "PNG data buffer would be too large\n" );
+		png_destroy_read_struct( &png_ptr, &info_ptr, NULL );
+		return false;
+	}
+
+	buffer.Init( 0, rowbytes * image_height );
+	row_pointers = (png_bytepp)malloc( image_height * sizeof(png_bytep) );
+
+	Assert( buffer.Base() && row_pointers );
+
+	if ( !row_pointers )
+	{
+		png_destroy_read_struct( &png_ptr, &info_ptr, NULL );
+		return false;
+	}
+
+	for ( png_uint_32 i = 0; i < image_height; ++i )
+		row_pointers[i] = buffer.Base() + i*rowbytes;
+
+	png_read_image( png_ptr, row_pointers );
+	//png_read_end( png_ptr, NULL );
+
+	png_destroy_read_struct( &png_ptr, &info_ptr, NULL );
+	free( row_pointers );
+
+	return true;
+#endif
+}
+
+//-----------------------------------------------------------------------------
 
 void CSource2013SteamInput::LoadHintRemap( const char *pszFileName )
 {
 	KeyValues *pKV = new KeyValues("HintRemap");
-	if ( pKV->LoadFromFile( filesystem, pszFileName ) )
+	if ( pKV->LoadFromFile( g_pFullFileSystem, pszFileName ) )
 	{
 		// Parse each hint to remap
 		KeyValues *pKVHint = pKV->GetFirstSubKey();
@@ -2038,9 +1595,9 @@ void CSource2013SteamInput::LoadHintRemap( const char *pszFileName )
 
 					Q_strncpy( m_HintRemaps[i].nRemapConds[i2].szParam, pszParam, sizeof( m_HintRemaps[i].nRemapConds[i2].szParam ) );
 
-					if (FStrEq( pKVRemapCond->GetName(), "if_input_type" ))
+					if (!V_strcmp( pKVRemapCond->GetName(), "if_input_type" ))
 						m_HintRemaps[i].nRemapConds[i2].iType = HINTREMAPCOND_INPUT_TYPE;
-					else if (FStrEq( pKVRemapCond->GetName(), "if_action_bound" ))
+					else if (!V_strcmp( pKVRemapCond->GetName(), "if_action_bound" ))
 						m_HintRemaps[i].nRemapConds[i2].iType = HINTREMAPCOND_ACTION_BOUND;
 					else
 						m_HintRemaps[i].nRemapConds[i2].iType = HINTREMAPCOND_NONE;
@@ -2069,7 +1626,7 @@ void CSource2013SteamInput::RemapHudHint( const char **pszInputHint )
 
 	for (int i = 0; i < m_HintRemaps.Count(); i++)
 	{
-		if (!FStrEq( *pszInputHint, m_HintRemaps[i].pszOldHint ))
+		if (V_strcmp( *pszInputHint, m_HintRemaps[i].pszOldHint ))
 			continue;
 
 		// If we've already selected a remap, ignore ones without conditions
@@ -2091,7 +1648,7 @@ void CSource2013SteamInput::RemapHudHint( const char **pszInputHint )
 				case HINTREMAPCOND_INPUT_TYPE:
 				{
 					ESteamInputType inputType = SteamInput()->GetInputTypeForHandle( m_nControllerHandle );
-					bPass = FStrEq( IdentifyControllerParam( inputType ), m_HintRemaps[i].nRemapConds[i2].szParam );
+					bPass = !V_strcmp( IdentifyControllerParam( inputType ), m_HintRemaps[i].nRemapConds[i2].szParam );
 				} break;
 
 				case HINTREMAPCOND_ACTION_BOUND:

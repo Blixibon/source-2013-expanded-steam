@@ -17,7 +17,7 @@
 #include <vgui_controls/Panel.h>
 #include <vgui/IVGui.h>
 #ifdef STEAM_INPUT
-#include "in_steaminput.h"
+#include "expanded_steam/isteaminput.h"
 #endif
 
 

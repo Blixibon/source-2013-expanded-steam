@@ -2856,9 +2856,9 @@ inline bool CGameMovement::OnLadder( trace_t &trace )
 #if defined (CSTRIKE_DLL) || defined(HL2_USES_FUNC_LADDER_CODE)
 ConVar sv_ladder_dampen ( "sv_ladder_dampen", "0.2", FCVAR_REPLICATED, "Amount to dampen perpendicular movement on a ladder", true, 0.0f, true, 1.0f );
 ConVar sv_ladder_angle( "sv_ladder_angle", "-0.707", FCVAR_REPLICATED, "Cos of angle of incidence to ladder perpendicular for applying ladder_dampen", true, -1.0f, true, 1.0f );
+#endif
 #ifdef STEAM_INPUT
 ConVar sv_ladder_use_movespeeds( "sv_ladder_use_movespeeds", "1", FCVAR_REPLICATED );
-#endif
 #endif
 //=============================================================================
 // HPE_END

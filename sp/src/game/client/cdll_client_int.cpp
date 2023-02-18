@@ -148,7 +148,7 @@
 #endif
 
 #ifdef STEAM_INPUT
-#include "in_steaminput.h"
+#include "expanded_steam/isteaminput.h"
 #endif
 
 extern vgui::IInputInternal *g_InputInternal;
@@ -223,6 +223,10 @@ IVEngineServer	*serverengine = NULL;
 #endif
 
 IScriptManager *scriptmanager = NULL;
+
+#ifdef STEAM_INPUT
+ISource2013SteamInput *g_pSteamInput = NULL;
+#endif
 
 IHaptics* haptics = NULL;// NVNT haptics system interface singleton
 
@@ -1095,6 +1099,17 @@ int CHLClient::Init( CreateInterfaceFn appSystemFactory, CreateInterfaceFn physi
 	vieweffects->Init();
 
 	C_BaseTempEntity::PrecacheTempEnts();
+	
+#ifdef STEAM_INPUT
+	//g_pSteamInput = (ISource2013SteamInput*)appSystemFactory( SOURCE2013STEAMINPUT_INTERFACE_VERSION, NULL );
+	//if (g_pSteamInput == NULL)
+	//{
+	//	g_pSteamInput = (ISource2013SteamInput*)Sys_GetFactoryThis()(SOURCE2013STEAMINPUT_INTERFACE_VERSION, NULL);
+	//}
+
+	g_pSteamInput = CreateSource2013SteamInput();
+	g_pSteamInput->Initialize( appSystemFactory );
+#endif
 
 	input->Init_All();
 
@@ -1361,7 +1376,8 @@ void CHLClient::HudUpdate( bool bActive )
 	{
 		if( !engine->IsConnected() || engine->IsPaused() )
 		{
-			g_pSteamInput->RunFrame();
+			ActionSet_t iActionSet = AS_MenuControls;
+			g_pSteamInput->RunFrame( iActionSet );
 		}
 	}
 #endif

@@ -9,7 +9,7 @@
 #include "c_rumble.h"
 #include "rumble_shared.h"
 #ifdef STEAM_INPUT
-#include "in_steaminput.h"
+#include "expanded_steam/isteaminput.h"
 #else
 #include "inputsystem/iinputsystem.h"
 #endif
