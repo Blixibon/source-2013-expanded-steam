@@ -379,7 +379,7 @@ void CSource2013SteamInput::InitSteamInput()
 	// Load the KV
 	LoadActionBinds( "scripts/steaminput_actionbinds.txt" );
 
-	if (g_DigitalActionBinds.Count())
+	if (g_DigitalActionBinds.Count() == 0)
 	{
 		Msg( "SteamInput has no action binds, will not run" );
 		return;
