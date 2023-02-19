@@ -36,7 +36,7 @@
 #endif
 
 #if defined(STEAM_INPUT)
-#include "in_steaminput.h"
+#include "expanded_steam/isteaminput.h"
 #endif
 #endif
 
@@ -3272,10 +3272,10 @@ public:
 		return steamapicontext->SteamApps()->BIsAppInstalled( nAppID );
 	}
 
-#if STEAMWORKS_VERSION >= 1520
+#ifdef STEAM_INPUT
 	bool IsSteamRunningOnSteamDeck()
 	{
-		return SteamUtils()->IsSteamRunningOnSteamDeck();
+		return g_pSteamInput->IsSteamRunningOnSteamDeck();
 	}
 #else
 	bool IsSteamRunningOnSteamDeck() { return false; }
