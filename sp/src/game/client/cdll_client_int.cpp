@@ -882,6 +882,14 @@ int CHLClient::Init( CreateInterfaceFn appSystemFactory, CreateInterfaceFn physi
 	ClientSteamContext().Activate();
 
 #ifdef STEAM_INPUT
+	//g_pSteamInput = (ISource2013SteamInput*)appSystemFactory( SOURCE2013STEAMINPUT_INTERFACE_VERSION, NULL );
+	//if (g_pSteamInput == NULL)
+	//{
+	//	g_pSteamInput = (ISource2013SteamInput*)Sys_GetFactoryThis()(SOURCE2013STEAMINPUT_INTERFACE_VERSION, NULL);
+	//}
+
+	g_pSteamInput = CreateSource2013SteamInput();
+	
 	if (g_pSteamInput->IsSteamRunningOnSteamDeck())
 	{
 		CommandLine()->AppendParm( "-deck", NULL );
@@ -1067,13 +1075,6 @@ int CHLClient::Init( CreateInterfaceFn appSystemFactory, CreateInterfaceFn physi
 	C_BaseTempEntity::PrecacheTempEnts();
 	
 #ifdef STEAM_INPUT
-	//g_pSteamInput = (ISource2013SteamInput*)appSystemFactory( SOURCE2013STEAMINPUT_INTERFACE_VERSION, NULL );
-	//if (g_pSteamInput == NULL)
-	//{
-	//	g_pSteamInput = (ISource2013SteamInput*)Sys_GetFactoryThis()(SOURCE2013STEAMINPUT_INTERFACE_VERSION, NULL);
-	//}
-
-	g_pSteamInput = CreateSource2013SteamInput();
 	g_pSteamInput->Initialize( appSystemFactory );
 #endif
 
