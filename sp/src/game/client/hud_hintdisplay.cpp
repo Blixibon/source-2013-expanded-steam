@@ -699,8 +699,8 @@ bool CHudHintKeyDisplay::SetHintText( const char *text )
 					m_bDontTintButtons = true; //!g_pSteamInput->TintGlyphs();
 					bIsBitmap = m_bDontTintButtons; // Prevents tinting
 
-					int fontTall = vgui::surface()->GetFontTall( m_hLargeFont );
-					m_iButtonSize = ((float)fontTall) * 2.0f;
+					float fontTall = vgui::surface()->GetFontTall( m_hLargeFont );
+					m_iButtonSize = vgui::scheme()->GetProportionalScaledValueEx( GetScheme(), Lerp( 0.5f, fontTall, 20.0f ) ); // TODO: More manageable value?
 
 					int iRealSize = m_iButtonSize;
 					CUtlVector <const char *> szStringList;
