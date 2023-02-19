@@ -124,10 +124,6 @@ void RegisterActivityConstants()
 
 extern void RegisterWeaponScriptConstants();
 
-#if defined(CLIENT_DLL) && defined(STEAM_INPUT)
-extern void RegisterSteamInputConstants();
-#endif
-
 void RegisterSharedScriptConstants()
 {
 	// "SERVER_DLL" is used in Source 2.
@@ -623,8 +619,4 @@ void RegisterSharedScriptConstants()
 #endif
 
 	RegisterWeaponScriptConstants();
-
-#if defined(CLIENT_DLL) && defined(STEAM_INPUT)
-	RegisterSteamInputConstants();
-#endif
 }
