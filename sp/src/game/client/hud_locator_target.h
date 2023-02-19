@@ -68,6 +68,8 @@ public:
 #ifdef STEAM_INPUT
 	// Indicates that m_pchBindingChoices strings need to be deleted
 	bool		m_bBindingChoicesWereAllocated = false;
+	CUtlVector<int>	m_ButtonIcons;
+	int			m_iButtonSize = 32;
 #endif
 
 	// Fields for drawing

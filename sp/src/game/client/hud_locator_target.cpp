@@ -22,7 +22,8 @@
 #include "hudelement.h"
 #include "vgui_int.h"
 #ifdef STEAM_INPUT
-#include "in_steaminput.h"
+#include "expanded_steam/isteaminput.h"
+#include "fmtstr.h"
 #endif
 
 #include "hud_macros.h"
@@ -577,6 +578,15 @@ void CLocatorTarget::SetBinding( const char *pszBinding )
 		m_bBindingChoicesWereAllocated = false;
 	}
 
+	if (m_ButtonIcons.Count() > 0)
+	{
+		for (int i = m_ButtonIcons.Count()-1; i >= 0; i--)
+		{
+			vgui::surface()->DestroyTextureID( m_ButtonIcons[i] );
+			m_ButtonIcons.FastRemove( i );
+		}
+	}
+
 	if (g_pSteamInput->IsEnabled())
 	{
 		// Each string should start NULL for the code below
@@ -588,36 +598,47 @@ void CLocatorTarget::SetBinding( const char *pszBinding )
 		while ( pchToken )
 		{
 			// Get the first parameter
-			int iTokenBindingCount = 0;
-			char szBinding[16] = { 0 };
-
 			vgui::HFont *pFont = NULL;
 			vgui::IScheme *pScheme = NULL;
 			GetLocatorPanelButtonFont( &pFont, &pScheme );
+			int fontTall = vgui::surface()->GetFontTall( *pFont );
+			m_iButtonSize = ((float)fontTall) * 2.0f;
 
-			g_pSteamInput->GetGlyphFontForCommand( szToken, szBinding, sizeof( szBinding ), *pFont, pScheme );
+			int iRealSize = m_iButtonSize;
+			CUtlVector <const char *> szStringList;
+			CUtlVector <int> iButtonIcons;
+			g_pSteamInput->GetGlyphPNGsForCommand( szStringList, szToken, iRealSize );
 
-			int len = strlen( szBinding );
-			if (len > 0)
+			int iButtonIconCount = szStringList.Count();
+			if (iButtonIconCount > 0)
 			{
-				for (int i = 0; i < MAX_LOCATOR_BINDINGS_SHOWN; i++)
+				for (int i = 0; i < iButtonIconCount; i++)
 				{
-					if (m_pchBindingChoices[i] == NULL)
+					CUtlMemory< byte > image;
+					if ( !g_pSteamInput->GetPNGBufferFromFile( szStringList[i], image ) )
 					{
-						m_pchBindingChoices[ i ]			= new char[MAX_LOCATOR_BINDINGS_SHOWN] { szBinding[i % len], '\0' };
-						m_iBindChoicesOriginalToken[ i ]	= nOriginalToken;
-						++m_iBindingChoicesCount;
-						++iTokenBindingCount;
+						Warning( "Can't find PNG buffer for %s\n", szStringList[i] );
 					}
-					else
-					{
-						// For hints which use multiple binds, we have to make sure binds are differentiated from alternate buttons
-						// and display each bind side-by-side instead
-						Q_snprintf( const_cast<char*>(m_pchBindingChoices[i]), MAX_LOCATOR_BINDINGS_SHOWN, "%s%c", m_pchBindingChoices[i], szBinding[i % len] );
-					}
+
+					iButtonIcons.AddToTail( vgui::surface()->CreateNewTextureID( true ) );
+					vgui::surface()->DrawSetTextureRGBA( iButtonIcons[i], image.Base(), iRealSize, iRealSize, true, false );
+
+					//Msg( "Hint PNG: \"%s\" (%i)\n", szStringList[i], iButtonIcons[i] );
+				}
+				
+				while ( m_iBindingChoicesCount < MAX_LOCATOR_BINDINGS_SHOWN )
+				{
+					m_pchBindingChoices[ m_iBindingChoicesCount ]			= (new CNumStr( iButtonIcons[m_iBindingChoicesCount % iButtonIconCount] ))->String();
+					m_iBindChoicesOriginalToken[ m_iBindingChoicesCount ]	= nOriginalToken;
+					++m_iBindingChoicesCount;
 				}
 
+				m_ButtonIcons.AddVectorToTail( iButtonIcons );
 				m_bBindingChoicesWereAllocated = true;
+			}
+			else
+			{
+				Warning( "No button PNGs found for \"%s\"\n", szToken );
 			}
 
 			nOriginalToken++;
@@ -2184,20 +2205,15 @@ void CLocatorPanel::DrawBindingName( CLocatorTarget *pTarget, const char *pchBin
 #ifdef STEAM_INPUT
 	else if ( g_pSteamInput->IsEnabled() )
 	{
-		// Draw the caption
-		wchar_t	wszCaption[ 64 ];
-		g_pVGuiLocalize->ConvertANSIToUnicode( pchBindingName, wszCaption, sizeof( wszCaption ) );
+		// Draw the image
+		int iLargeIconShift = MAX( 0, pTarget->m_iButtonSize - ( ScreenWidth() * ICON_SIZE + ICON_GAP + ICON_GAP ) );
 
-		vgui::surface()->DrawSetTextFont( m_hButtonFont );
-		int fontTall = vgui::surface()->GetFontTall( m_hButtonFont );
-		int iWidth = GetScreenWidthForCaption( wszCaption, m_hButtonFont );
+		vgui::surface()->DrawSetColor( Color( 255, 255, 255, pTarget->m_alpha ) );
+		vgui::surface()->DrawSetTexture( atoi( pchBindingName ) );
 
-		int iLargeIconShift = MAX( 0, iWidth - ( ScreenWidth() * ICON_SIZE + ICON_GAP + ICON_GAP ) );
-
-		// Draw the button
-		vgui::surface()->DrawSetTextColor( 255,255,255, pTarget->m_alpha );
-		vgui::surface()->DrawSetTextPos( x - (iWidth>>1) - iLargeIconShift, y - (fontTall >>1) );
-		vgui::surface()->DrawUnicodeString( wszCaption );
+		x -= (pTarget->m_iButtonSize >> 1) - iLargeIconShift;
+		y -= (pTarget->m_iButtonSize >> 1);
+		vgui::surface()->DrawTexturedRect( x, y, x + pTarget->m_iButtonSize, y + pTarget->m_iButtonSize );
 	}
 #endif
 	else
