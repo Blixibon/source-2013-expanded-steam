@@ -94,7 +94,7 @@ extern ConVar gameinstructor_default_bindingcolor;
 #endif
 
 #ifdef STEAM_INPUT
-void GetLocatorPanelButtonFont( vgui::HFont **font, vgui::IScheme **pScheme );
+void GetLocatorPanelButtonFont( vgui::HFont &font, vgui::HScheme &pScheme );
 #endif
 
 
@@ -598,11 +598,11 @@ void CLocatorTarget::SetBinding( const char *pszBinding )
 		while ( pchToken )
 		{
 			// Get the first parameter
-			vgui::HFont *pFont = NULL;
-			vgui::IScheme *pScheme = NULL;
-			GetLocatorPanelButtonFont( &pFont, &pScheme );
-			int fontTall = vgui::surface()->GetFontTall( *pFont );
-			m_iButtonSize = ((float)fontTall) * 2.0f;
+			vgui::HFont hFont;
+			vgui::HScheme hScheme;
+			GetLocatorPanelButtonFont( hFont, hScheme );
+			float fontTall = vgui::surface()->GetFontTall( hFont );
+			m_iButtonSize = vgui::scheme()->GetProportionalScaledValueEx( hScheme, Lerp( 0.5f, fontTall, 20.0f ) ); // TODO: More manageable value?
 
 			int iRealSize = m_iButtonSize;
 			CUtlVector <const char *> szStringList;
@@ -921,10 +921,10 @@ inline CLocatorPanel * GetPlayerLocatorPanel()
 }
 
 #ifdef STEAM_INPUT
-void GetLocatorPanelButtonFont( vgui::HFont **font, vgui::IScheme **pScheme )
+void GetLocatorPanelButtonFont( vgui::HFont &font, vgui::HScheme &pScheme )
 {
-	*font = s_pLocatorPanel->GetButtonFont();
-	*pScheme = vgui::scheme()->GetIScheme( s_pLocatorPanel->GetScheme() );
+	font = s_pLocatorPanel->GetButtonFont();
+	pScheme = s_pLocatorPanel->GetScheme();
 }
 #endif
 
