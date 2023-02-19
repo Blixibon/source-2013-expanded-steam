@@ -222,7 +222,7 @@ public:
 
 	bool TestActions( int iActionSet, InputHandle_t nController );
 
-	void TestDigitalActionBind( InputHandle_t nController, InputDigitalActionBind_t *DigitalAction, bool &bActiveInput );
+	void TestDigitalActionBind( InputHandle_t nController, InputDigitalActionBind_t &DigitalAction, bool &bActiveInput );
 #if MENU_ACTIONS_ARE_BINDS
 	void PressKeyFromDigitalActionHandle( InputHandle_t nController, InputDigitalActionBind_t &nHandle, ButtonCode_t nKey, bool &bActiveInput );
 #else
@@ -379,6 +379,12 @@ void CSource2013SteamInput::InitSteamInput()
 	// Load the KV
 	LoadActionBinds( "scripts/steaminput_actionbinds.txt" );
 
+	if (g_DigitalActionBinds.Count())
+	{
+		Msg( "SteamInput has no action binds, will not run" );
+		return;
+	}
+
 	// Fill out special cases
 	g_DAB_Zoom				= FindActionBind("zoom");
 	g_DAB_Brake				= FindActionBind("jump");
@@ -523,6 +529,10 @@ void CSource2013SteamInput::LoadActionBinds( const char *pszFileName )
 
 			pKVAction = pKVAction->GetNextKey();
 		}
+	}
+	else
+	{
+		Msg( "SteamInput action bind file \"%s\" failed to load\n", pszFileName );
 	}
 	pKV->deleteThis();
 }
@@ -693,6 +703,9 @@ void CSource2013SteamInput::DeckConnected( InputHandle_t nDeviceHandle )
 
 void CSource2013SteamInput::RunFrame( ActionSet_t &iActionSet )
 {
+	if (g_DigitalActionBinds.Count() == 0)
+		return;
+
 	SteamInput()->RunFrame();
 
 	static InputHandle_t inputHandles[STEAM_INPUT_MAX_COUNT];
@@ -821,7 +834,7 @@ bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nControll
 			// Run commands for all digital actions
 			for (int i = 0; i < g_DigitalActionBinds.Count(); i++)
 			{
-				TestDigitalActionBind( nController, &g_DigitalActionBinds[i], bActiveInput );
+				TestDigitalActionBind( nController, g_DigitalActionBinds[i], bActiveInput );
 			}
 
 			InputAnalogActionData_t moveData = SteamInput()->GetAnalogActionData( nController, g_AA_Move );
@@ -850,7 +863,7 @@ bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nControll
 			// Run commands for all digital actions
 			for (int i = 0; i < g_DigitalActionBinds.Count(); i++)
 			{
-				TestDigitalActionBind( nController, &g_DigitalActionBinds[i], bActiveInput );
+				TestDigitalActionBind( nController, g_DigitalActionBinds[i], bActiveInput );
 			}
 
 			InputAnalogActionData_t moveData = SteamInput()->GetAnalogActionData( nController, g_AA_Move );
@@ -940,7 +953,7 @@ bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nControll
 			PressKeyFromDigitalActionHandle( nController, g_DA_MenuRB, KEY_XBUTTON_RIGHT, bActiveInput ); // KEY_XBUTTON_RIGHT_SHOULDER
 #endif
 
-			TestDigitalActionBind( nController, g_DAB_MenuPause, bActiveInput );
+			TestDigitalActionBind( nController, *g_DAB_MenuPause, bActiveInput );
 
 			if (!m_bIsGamepadUI)
 			{
@@ -992,30 +1005,30 @@ bool CSource2013SteamInput::TestActions( int iActionSet, InputHandle_t nControll
 	return bActiveInput;
 }
 
-void CSource2013SteamInput::TestDigitalActionBind( InputHandle_t nController, InputDigitalActionBind_t *DigitalAction, bool &bActiveInput )
+void CSource2013SteamInput::TestDigitalActionBind( InputHandle_t nController, InputDigitalActionBind_t &DigitalAction, bool &bActiveInput )
 {
-	InputDigitalActionData_t data = SteamInput()->GetDigitalActionData( nController, DigitalAction->handle );
+	InputDigitalActionData_t data = SteamInput()->GetDigitalActionData( nController, DigitalAction.handle );
 
 	if (data.bState)
 	{
 		// Key is not down
-		if (!DigitalAction->bDown)
+		if (!DigitalAction.bDown)
 		{
-			DigitalAction->controller = nController;
-			DigitalAction->bDown = true;
-			DigitalAction->OnDown();
+			DigitalAction.controller = nController;
+			DigitalAction.bDown = true;
+			DigitalAction.OnDown();
 		}
 
-		if (DigitalAction->controller == nController)
+		if (DigitalAction.controller == nController)
 			bActiveInput = true;
 	}
-	else if (DigitalAction->controller == nController)
+	else if (DigitalAction.controller == nController)
 	{
 		// Key was already down on this controller
-		if (DigitalAction->bDown)
+		if (DigitalAction.bDown)
 		{
-			DigitalAction->bDown = false;
-			DigitalAction->OnUp();
+			DigitalAction.bDown = false;
+			DigitalAction.OnUp();
 		}
 	}
 }
