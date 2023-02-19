@@ -881,8 +881,8 @@ int CHLClient::Init( CreateInterfaceFn appSystemFactory, CreateInterfaceFn physi
 #ifndef NO_STEAM
 	ClientSteamContext().Activate();
 
-#if STEAMWORKS_VERSION >= 1520
-	if (SteamUtils()->IsSteamRunningOnSteamDeck())
+#ifdef STEAM_INPUT
+	if (g_pSteamInput->IsSteamRunningOnSteamDeck())
 	{
 		CommandLine()->AppendParm( "-deck", NULL );
 		CommandLine()->AppendParm( "-w", "1280" );
