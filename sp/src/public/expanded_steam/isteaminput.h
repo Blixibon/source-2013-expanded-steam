@@ -108,8 +108,6 @@ public:
 	virtual void GetGlyphPNGsForCommand( CUtlVector<const char*> &szImgList, const char *pszCommand, int &iSize, int iStyle = 0 ) = 0;
 	virtual void GetGlyphSVGsForCommand( CUtlVector<const char*> &szImgList, const char *pszCommand ) = 0;
 
-	virtual bool GetPNGBufferFromFile( const char *filename, CUtlMemory< byte > &buffer ) = 0;
-
 	//-----------------------------------------------------------------------------
 
 	virtual void RemapHudHint( const char **pszInputHint ) = 0;
