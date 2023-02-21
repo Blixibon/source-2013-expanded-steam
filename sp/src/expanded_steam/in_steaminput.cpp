@@ -1627,19 +1627,20 @@ void CSource2013SteamInput::LoadHintRemap( const char *pszFileName )
 	pKV->deleteThis();
 }
 
-void CSource2013SteamInput::RemapHudHint( const char **pszInputHint )
+void CSource2013SteamInput::RemapHudHint( const char **ppszInputHint )
 {
 	if (!si_hintremap.GetBool())
 		return;
 
-	if ((*pszInputHint)[0] == '#')
-		(*pszInputHint)++;
+	const char *pszInputHint = *ppszInputHint;
+	if (pszInputHint[0] == '#')
+		pszInputHint++;
 
 	int iRemap = -1;
 
 	for (int i = 0; i < m_HintRemaps.Count(); i++)
 	{
-		if (V_strcmp( *pszInputHint, m_HintRemaps[i].pszOldHint ))
+		if (V_strcmp( pszInputHint, m_HintRemaps[i].pszOldHint ))
 			continue;
 
 		// If we've already selected a remap, ignore ones without conditions
@@ -1647,7 +1648,7 @@ void CSource2013SteamInput::RemapHudHint( const char **pszInputHint )
 			continue;
 
 		if (si_print_hintremap.GetBool())
-			Msg( "Hint Remap: Testing hint remap for %s to %s...\n", *pszInputHint, m_HintRemaps[i].pszNewHint );
+			Msg( "Hint Remap: Testing hint remap for %s to %s...\n", pszInputHint, m_HintRemaps[i].pszNewHint );
 
 		bool bPass = true;
 
@@ -1682,26 +1683,26 @@ void CSource2013SteamInput::RemapHudHint( const char **pszInputHint )
 		if (bPass)
 		{
 			if (si_print_hintremap.GetBool())
-				Msg( "Hint Remap: Hint remap for %s to %s succeeded\n", *pszInputHint, m_HintRemaps[i].pszNewHint );
+				Msg( "Hint Remap: Hint remap for %s to %s succeeded\n", pszInputHint, m_HintRemaps[i].pszNewHint );
 
 			iRemap = i;
 		}
 		else if (si_print_hintremap.GetBool())
 		{
-			Msg( "Hint Remap: Hint remap for %s to %s did not pass\n", *pszInputHint, m_HintRemaps[i].pszNewHint );
+			Msg( "Hint Remap: Hint remap for %s to %s did not pass\n", pszInputHint, m_HintRemaps[i].pszNewHint );
 		}
 	}
 
 	if (iRemap != -1)
 	{
 		if (si_print_hintremap.GetBool())
-			Msg( "Hint Remap: Remapping hint %s to %s\n", *pszInputHint, m_HintRemaps[iRemap].pszNewHint );
+			Msg( "Hint Remap: Remapping hint %s to %s\n", pszInputHint, m_HintRemaps[iRemap].pszNewHint );
 
-		*pszInputHint = m_HintRemaps[iRemap].pszNewHint;
+		*ppszInputHint = m_HintRemaps[iRemap].pszNewHint;
 	}
 	else
 	{
 		if (si_print_hintremap.GetBool())
-			Msg( "Hint Remap: Didn't find a hint for %s to remap to\n", *pszInputHint );
+			Msg( "Hint Remap: Didn't find a hint for %s to remap to\n", pszInputHint );
 	}
 }
