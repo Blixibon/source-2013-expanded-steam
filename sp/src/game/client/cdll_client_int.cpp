@@ -1181,6 +1181,10 @@ void CHLClient::PostInit()
 		}
 	}
 #endif
+
+#ifdef STEAM_INPUT
+	g_pSteamInput->PostInit();
+#endif
 }
 
 //-----------------------------------------------------------------------------
