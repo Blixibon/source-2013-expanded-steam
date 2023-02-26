@@ -719,9 +719,6 @@ void CSource2013SteamInput::DeckConnected( InputHandle_t nDeviceHandle )
 
 void CSource2013SteamInput::RunFrame( ActionSet_t &iActionSet )
 {
-	if (g_DigitalActionBinds.Count() == 0)
-		return;
-
 	SteamInput()->RunFrame();
 
 	static InputHandle_t inputHandles[STEAM_INPUT_MAX_COUNT];
@@ -735,6 +732,17 @@ void CSource2013SteamInput::RunFrame( ActionSet_t &iActionSet )
 		{
 			// No controllers available, disable Steam Input
 			InputDeviceDisconnected( m_nControllerHandle );
+		}
+		return;
+	}
+
+	if (g_DigitalActionBinds.Count() == 0)
+	{
+		if (iNumHandles > 0 && m_nControllerHandle == 0)
+		{
+			// A new controller may have been connected without proper Steam Input initialization, so restart it
+			Shutdown();
+			InitSteamInput();
 		}
 		return;
 	}
